@@ -1,0 +1,160 @@
+import logging
+import asyncio
+from sqlalchemy.orm import Session
+import sys
+import os
+
+# Добавляем корневую директорию в путь для импорта
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from db.models import User, Mode
+from proxy.utils import get_user_by_port, get_active_mode, get_scheduled_mode, modify_stratum_login
+
+logger = logging.getLogger(__name__)
+
+class StratumRouter:
+    def __init__(self, db_session: Session):
+        self.db_session = db_session
+        self.connections = {}  # Словарь для хранения активных соединений
+    
+    async def handle_client(self, reader, writer, client_port):
+        """Обработка подключения клиента"""
+        client_addr = writer.get_extra_info('peername')
+        logger.info(f"Новое подключение от {client_addr} на порт {client_port}")
+        
+        # Получаем пользователя по порту
+        user = get_user_by_port(self.db_session, client_port)
+        if not user:
+            logger.warning(f"Пользователь для порта {client_port} не найден")
+            writer.close()
+            await writer.wait_closed()
+            return
+        
+        # Проверяем активность подписки
+        if not user.is_subscription_active():
+            logger.warning(f"Подписка пользователя {user.username} (ID: {user.id}) истекла")
+            try:
+                writer.write(f"Подписка истекла. Обратитесь к администратору.\n")
+                await writer.drain()
+            except Exception as e:
+                logger.error(f"Ошибка при отправке сообщения: {e}")
+            finally:
+                writer.close()
+                await writer.wait_closed()
+            return
+        
+        # Определяем активный режим (по расписанию или вручную установленный)
+        mode = get_scheduled_mode(self.db_session, user.id) or get_active_mode(self.db_session, user.id)
+        
+        if not mode:
+            logger.warning(f"Активный режим для пользователя {user.username} (ID: {user.id}) не найден")
+            try:
+                writer.write(f"Режим не настроен. Установите режим через Telegram-бот.\n")
+                await writer.drain()
+            except Exception as e:
+                logger.error(f"Ошибка при отправке сообщения: {e}")
+            finally:
+                writer.close()
+                await writer.wait_closed()
+            return
+        
+        # Подключаемся к пулу
+        try:
+            pool_reader, pool_writer = await asyncio.open_connection(mode.host, mode.port)
+            logger.info(f"Подключено к пулу {mode.host}:{mode.port} для пользователя {user.username}")
+            
+            # Сохраняем информацию о соединении
+            connection_info = {
+                'user': user,
+                'mode': mode,
+                'client_reader': reader,
+                'client_writer': writer,
+                'pool_reader': pool_reader,
+                'pool_writer': pool_writer
+            }
+            
+            self.connections[client_addr] = connection_info
+            
+            # Запускаем две задачи для проксирования данных в обе стороны
+            client_to_pool_task = asyncio.create_task(
+                self._proxy_data(reader, pool_writer, user.login, mode.alias, 'client->pool')
+            )
+            
+            pool_to_client_task = asyncio.create_task(
+                self._proxy_data(pool_reader, writer, None, None, 'pool->client')
+            )
+            
+            # Ждем завершения любой из задач
+            done, pending = await asyncio.wait(
+                [client_to_pool_task, pool_to_client_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # Отменяем оставшуюся задачу
+            for task in pending:
+                task.cancel()
+                
+            # Закрываем соединения
+            writer.close()
+            pool_writer.close()
+            await writer.wait_closed()
+            await pool_writer.wait_closed()
+            
+            # Удаляем информацию о соединении
+            if client_addr in self.connections:
+                del self.connections[client_addr]
+                
+        except Exception as e:
+            logger.error(f"Ошибка при подключении к пулу {mode.host}:{mode.port}: {e}")
+            try:
+                writer.write(f"Ошибка подключения к пулу: {str(e)}\n".encode())
+                await writer.drain()
+            except Exception as e:
+                logger.error(f"Ошибка при отправке сообщения об ошибке: {e}")
+            finally:
+                writer.close()
+                await writer.wait_closed()
+    
+    async def _proxy_data(self, reader, writer, login, alias, direction):
+        """Проксирование данных между клиентом и пулом"""
+        try:
+            while not reader.at_eof():
+                data = await reader.read(8192)
+                if not data:
+                    break
+                
+                # Если это направление от клиента к пулу и у нас есть логин и алиас,
+                # модифицируем данные, заменяя логин на алиас
+                if direction == 'client->pool' and login and alias:
+                    # Декодируем данные из байтов в строку
+                    try:
+                        decoded_data = data.decode('utf-8')
+                        # Проверяем, содержит ли сообщение JSON с методом authorize или submit
+                        if '"method":"mining.authorize"' in decoded_data or '"method":"mining.submit"' in decoded_data:
+                            # Модифицируем логин
+                            modified_data = modify_stratum_login(decoded_data, alias)
+                            # Кодируем обратно в байты
+                            data = modified_data.encode('utf-8')
+                    except UnicodeDecodeError:
+                        # Если не удалось декодировать, оставляем данные как есть
+                        pass
+                
+                writer.write(data)
+                await writer.drain()
+                
+        except asyncio.CancelledError:
+            # Задача была отменена, это нормальное поведение
+            pass
+        except Exception as e:
+            logger.error(f"Ошибка при проксировании данных ({direction}): {e}")
+    
+    def close_all_connections(self):
+        """Закрытие всех активных соединений"""
+        for client_addr, conn_info in self.connections.items():
+            try:
+                conn_info['client_writer'].close()
+                conn_info['pool_writer'].close()
+            except Exception as e:
+                logger.error(f"Ошибка при закрытии соединения {client_addr}: {e}")
+        
+        self.connections.clear()
