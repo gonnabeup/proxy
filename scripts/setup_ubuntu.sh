@@ -22,7 +22,7 @@ fi
 # Установка зависимостей
 echo -e "${YELLOW}Установка системных зависимостей...${NC}"
 apt-get update
-apt-get install -y python3 python3-pip python3-venv postgresql postgresql-contrib git
+apt-get install -y python3 python3-pip python3-venv postgresql postgresql-contrib
 
 # Создание пользователя для сервиса (если нужно)
 echo -e "${YELLOW}Создание пользователя cryptoshi...${NC}"
@@ -33,19 +33,19 @@ else
     echo "Пользователь cryptoshi создан"
 fi
 
-# Переход в домашнюю директорию пользователя
-cd /home/cryptoshi
+# Определение текущей директории проекта
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Клонирование репозитория (если нужно)
-echo -e "${YELLOW}Клонирование репозитория...${NC}"
-if [ -d "bot2.0" ]; then
-    echo "Репозиторий уже существует, обновляем..."
-    cd bot2.0
-    git pull
-else
-    git clone https://github.com/yourusername/cryptoshi.git bot2.0
-    cd bot2.0
-fi
+echo -e "${YELLOW}Установка проекта из директории ${PROJECT_DIR}...${NC}"
+
+# Копирование проекта в домашнюю директорию пользователя cryptoshi
+echo -e "${YELLOW}Копирование проекта в домашнюю директорию пользователя...${NC}"
+cp -r "$PROJECT_DIR" /home/cryptoshi/bot2.0
+chown -R cryptoshi:cryptoshi /home/cryptoshi/bot2.0
+
+# Переход в директорию проекта
+cd /home/cryptoshi/bot2.0
 
 # Создание виртуального окружения
 echo -e "${YELLOW}Создание виртуального окружения...${NC}"
