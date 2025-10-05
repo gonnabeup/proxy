@@ -66,10 +66,26 @@ fi
 
 # Настройка базы данных PostgreSQL
 echo -e "${YELLOW}Настройка базы данных...${NC}"
-# Создаем пользователя и базу данных PostgreSQL
-su - postgres -c "psql -c \"CREATE USER cryptoshi WITH PASSWORD 'cryptoshi';\""
-su - postgres -c "psql -c \"CREATE DATABASE cryptoshi OWNER cryptoshi;\""
+
+# Проверка и создание пользователя PostgreSQL
+if ! su - postgres -c "psql -tA -c \"SELECT 1 FROM pg_roles WHERE rolname='cryptoshi'\" " | grep -q 1; then
+    su - postgres -c "psql -c \"CREATE USER cryptoshi WITH PASSWORD 'cryptoshi';\""
+    echo "Пользователь cryptoshi создан"
+else
+    echo "Пользователь cryptoshi уже существует"
+fi
+
+# Проверка и создание базы данных
+if ! su - postgres -c "psql -tA -c \"SELECT 1 FROM pg_database WHERE datname='cryptoshi'\" " | grep -q 1; then
+    su - postgres -c "psql -c \"CREATE DATABASE cryptoshi OWNER cryptoshi;\""
+    echo "База данных cryptoshi создана"
+else
+    echo "База данных cryptoshi уже существует"
+fi
+
+# Грант привилегий (можно всегда выполнять, чтобы убедиться)
 su - postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE cryptoshi TO cryptoshi;\""
+echo "Привилегии предоставлены"
 
 # Копирование примера конфигурации
 echo -e "${YELLOW}Настройка конфигурации...${NC}"
