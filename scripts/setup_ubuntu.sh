@@ -55,7 +55,14 @@ source venv/bin/activate
 # Установка зависимостей Python
 echo -e "${YELLOW}Установка Python зависимостей...${NC}"
 pip install --upgrade pip
-pip install -r requirements.txt
+
+# Проверка наличия файла requirements.txt
+if [ -f "requirements.txt" ]; then
+    pip install -r requirements.txt
+else
+    echo -e "${RED}Файл requirements.txt не найден. Устанавливаем основные зависимости...${NC}"
+    pip install aiogram SQLAlchemy alembic psycopg2-binary python-dotenv asyncio aiohttp
+fi
 
 # Настройка базы данных PostgreSQL
 echo -e "${YELLOW}Настройка базы данных...${NC}"
