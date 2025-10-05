@@ -21,7 +21,7 @@
 
 Для начала клонируйте репозиторий:
 ```bash
-git clone https://github.com/yourusername/cryptoshi.git
+git clone https://github.com/gonnabeup/proxy
 cd cryptoshi
 ```
 ### Автоматическая установка (Ubuntu)
