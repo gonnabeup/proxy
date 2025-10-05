@@ -19,6 +19,11 @@
 
 ## Установка
 
+Для начала клонируйте репозиторий:
+```bash
+git clone https://github.com/yourusername/cryptoshi.git
+cd cryptoshi
+```
 ### Автоматическая установка (Ubuntu)
 
 Для автоматической установки на Ubuntu выполните:
@@ -31,34 +36,28 @@ chmod +x setup_ubuntu.sh
 
 ### Ручная установка
 
-1. Клонируйте репозиторий:
-```bash
-git clone https://github.com/yourusername/cryptoshi.git
-cd cryptoshi
-```
-
-2. Создайте виртуальное окружение:
+1. Создайте виртуальное окружение:
 ```bash
 python -m venv venv
 source venv/bin/activate  # На Windows: venv\Scripts\activate
 ```
 
-3. Установите зависимости:
+2. Установите зависимости:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Настройте базу данных PostgreSQL:
+3. Настройте базу данных PostgreSQL:
 ```bash
 # Создайте базу данных
 createdb cryptoshi
 ```
 
-5. Настройте конфигурацию:
+4. Настройте конфигурацию:
    - Скопируйте `config/settings.py.example` в `config/settings.py`
    - Отредактируйте настройки базы данных и Telegram-бота
 
-6. Запустите миграции:
+5. Запустите миграции:
 ```bash
 alembic upgrade head
 ```
