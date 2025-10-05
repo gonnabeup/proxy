@@ -82,6 +82,19 @@ fi
 
 # Запуск миграций
 echo -e "${YELLOW}Запуск миграций базы данных...${NC}"
+# Проверка наличия конфигурации Alembic
+if [ ! -f "alembic.ini" ]; then
+    echo -e "${YELLOW}Инициализация Alembic...${NC}"
+    alembic init db/migrations
+    # Настройка конфигурации Alembic
+    sed -i "s|sqlalchemy.url = .*|sqlalchemy.url = postgresql://cryptoshi:cryptoshi@localhost/cryptoshi|g" alembic.ini
+fi
+# Создание начальной миграции, если директория пуста
+if [ ! "$(ls -A db/migrations/versions 2>/dev/null)" ]; then
+    echo -e "${YELLOW}Создание начальной миграции...${NC}"
+    alembic revision --autogenerate -m "Initial migration"
+fi
+# Применение миграций
 alembic upgrade head
 
 # Создание systemd сервиса
