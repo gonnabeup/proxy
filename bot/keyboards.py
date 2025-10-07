@@ -1,60 +1,68 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
 def get_cancel_keyboard():
     """Клавиатура с кнопкой отмены"""
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    keyboard.add(KeyboardButton("Отмена"))
-    return keyboard
+    builder = ReplyKeyboardBuilder()
+    builder.add(KeyboardButton(text="Отмена"))
+    return builder.as_markup(resize_keyboard=True, one_time_keyboard=False)
 
 def get_yes_no_keyboard():
     """Клавиатура с кнопками Да/Нет"""
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    keyboard.add(KeyboardButton("Да"), KeyboardButton("Нет"))
-    return keyboard
+    builder = ReplyKeyboardBuilder()
+    builder.add(KeyboardButton(text="Да"))
+    builder.add(KeyboardButton(text="Нет"))
+    return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 def get_main_keyboard(is_admin=False):
     """Основная клавиатура с доступными командами"""
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
+    builder = ReplyKeyboardBuilder()
     
     # Кнопки для всех пользователей
-    keyboard.add(KeyboardButton("/status"), KeyboardButton("/modes"))
-    keyboard.add(KeyboardButton("/setlogin"), KeyboardButton("/setmode"))
-    keyboard.add(KeyboardButton("/addmode"), KeyboardButton("/schedule"))
-    keyboard.add(KeyboardButton("/help"))
+    builder.row(KeyboardButton(text="/status"), KeyboardButton(text="/modes"))
+    builder.row(KeyboardButton(text="/setlogin"), KeyboardButton(text="/setmode"))
+    builder.row(KeyboardButton(text="/addmode"), KeyboardButton(text="/schedule"))
+    builder.row(KeyboardButton(text="/help"))
     
     # Дополнительные кнопки для администраторов
     if is_admin:
-        keyboard.add(KeyboardButton("/adduser"), KeyboardButton("/listusers"))
-        keyboard.add(KeyboardButton("/setsub"), KeyboardButton("/setport"))
-        keyboard.add(KeyboardButton("/freerange"))
+        builder.row(KeyboardButton(text="/adduser"), KeyboardButton(text="/listusers"))
+        builder.row(KeyboardButton(text="/setsub"), KeyboardButton(text="/setport"))
+        builder.row(KeyboardButton(text="/freerange"))
     
-    return keyboard
+    return builder.as_markup(resize_keyboard=True, one_time_keyboard=False)
 
 def get_modes_keyboard(modes, action="view"):
     """Инлайн-клавиатура для выбора режима"""
-    keyboard = InlineKeyboardMarkup(row_width=1)
+    builder = InlineKeyboardBuilder()
     
     for mode in modes:
         callback_data = f"{action}_mode_{mode.id}"
         button_text = f"{mode.name} ({mode.host}:{mode.port})"
-        keyboard.add(InlineKeyboardButton(text=button_text, callback_data=callback_data))
+        builder.row(InlineKeyboardButton(text=button_text, callback_data=callback_data))
     
-    return keyboard
+    return builder.as_markup()
 
 def get_schedule_keyboard():
     """Клавиатура для команды расписания"""
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    keyboard.add(KeyboardButton("/schedule add"), KeyboardButton("/schedule list"))
-    keyboard.add(KeyboardButton("/schedule delete"), KeyboardButton("Отмена"))
-    return keyboard
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text="/schedule add"), 
+        KeyboardButton(text="/schedule list")
+    )
+    builder.row(
+        KeyboardButton(text="/schedule delete"), 
+        KeyboardButton(text="Отмена")
+    )
+    return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 def get_schedule_list_keyboard(schedules):
     """Инлайн-клавиатура для списка расписаний"""
-    keyboard = InlineKeyboardMarkup(row_width=1)
+    builder = InlineKeyboardBuilder()
     
     for schedule in schedules:
         callback_data = f"delete_schedule_{schedule.id}"
         button_text = f"{schedule.mode.name}: {schedule.start_time}-{schedule.end_time}"
-        keyboard.add(InlineKeyboardButton(text=button_text, callback_data=callback_data))
+        builder.row(InlineKeyboardButton(text=button_text, callback_data=callback_data))
     
-    return keyboard
+    return builder.as_markup()

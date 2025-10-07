@@ -7,8 +7,9 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from aiogram import Bot, Dispatcher
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
+from aiogram.enums import ParseMode
 
 from config.settings import BOT_TOKEN, SCHEDULER_INTERVAL
 from db.models import init_db, get_session
@@ -58,10 +59,10 @@ async def main():
     db_engine = init_db()
     db_session = get_session(db_engine)
     
-    # Инициализация бота
-    bot = Bot(token=BOT_TOKEN)
+    # Инициализация бота и диспетчера
+    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
     storage = MemoryStorage()
-    dp = Dispatcher(bot, storage=storage)
+    dp = Dispatcher(storage=storage)
     
     # Регистрация обработчиков
     register_handlers(dp, db_session)
@@ -79,10 +80,9 @@ async def main():
     # Запуск бота
     try:
         logger.info("Бот запущен")
-        await dp.start_polling()
+        await dp.start_polling(bot)
     finally:
         await proxy_server.stop()
-        await bot.close()
         db_session.close()
 
 if __name__ == "__main__":

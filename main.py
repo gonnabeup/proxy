@@ -2,7 +2,8 @@ import asyncio
 import logging
 import sys
 from aiogram import Bot, Dispatcher
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.enums import ParseMode
 
 from config.settings import (
     BOT_TOKEN, PROXY_HOST, DEFAULT_PORT_RANGE, 
@@ -33,9 +34,9 @@ async def main():
     db_session = get_session()
     
     # Инициализация бота
-    bot = Bot(token=BOT_TOKEN)
+    bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
     storage = MemoryStorage()
-    dp = Dispatcher(bot, storage=storage)
+    dp = Dispatcher(storage=storage)
     
     # Инициализация прокси-сервера
     proxy_server = StratumProxyServer(
@@ -62,16 +63,13 @@ async def main():
         
         # Запуск бота
         logger.info("Бот запущен")
-        await dp.start_polling()
+        await dp.start_polling(bot)
     finally:
         # Остановка планировщика
         await scheduler.stop()
         
         # Остановка прокси-сервера
         await proxy_server.stop()
-        
-        # Закрытие сессии бота
-        await bot.session.close()
         
         # Закрытие сессии БД
         db_session.close()

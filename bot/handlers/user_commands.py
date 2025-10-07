@@ -1,9 +1,9 @@
 import logging
 from datetime import datetime
-from aiogram import Dispatcher, types
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.dispatcher.filters import Text
+from aiogram import Dispatcher, types, F
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import Command, Text
 
 from db.models import User, Mode, Schedule, get_session
 from bot.keyboards import get_modes_keyboard, get_cancel_keyboard, get_yes_no_keyboard
@@ -451,33 +451,33 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
 def register_user_handlers(dp: Dispatcher, db_session):
     """Регистрация обработчиков пользовательских команд"""
     # Базовые команды
-    dp.register_message_handler(lambda msg: cmd_start(msg, dp.current_state(), db_session), commands=["start"])
-    dp.register_message_handler(cmd_setlogin, commands=["setlogin"], state=None)
-    dp.register_message_handler(lambda msg: process_login_input(msg, dp.current_state(), db_session), state=SetLoginState.waiting_for_login)
+    dp.message.register(lambda msg: cmd_start(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), Command("start"))
+    dp.message.register(cmd_setlogin, Command("setlogin"))
+    dp.message.register(lambda msg: process_login_input(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), SetLoginState.waiting_for_login)
     
     # Команды для режимов
-    dp.register_message_handler(cmd_addmode, commands=["addmode"], state=None)
-    dp.register_message_handler(process_mode_name, state=AddModeState.waiting_for_name)
-    dp.register_message_handler(process_mode_host, state=AddModeState.waiting_for_host)
-    dp.register_message_handler(process_mode_port, state=AddModeState.waiting_for_port)
-    dp.register_message_handler(lambda msg: process_mode_alias(msg, dp.current_state(), db_session), state=AddModeState.waiting_for_alias)
+    dp.message.register(cmd_addmode, Command("addmode"))
+    dp.message.register(process_mode_name, AddModeState.waiting_for_name)
+    dp.message.register(process_mode_host, AddModeState.waiting_for_host)
+    dp.message.register(process_mode_port, AddModeState.waiting_for_port)
+    dp.message.register(lambda msg: process_mode_alias(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), AddModeState.waiting_for_alias)
     
-    dp.register_message_handler(lambda msg: cmd_modes(msg, db_session), commands=["modes"])
-    dp.register_message_handler(lambda msg: cmd_setmode(msg, dp.current_state(), db_session), commands=["setmode"], state=None)
-    dp.register_message_handler(lambda msg: process_mode_selection(msg, dp.current_state(), db_session), state=SetModeState.waiting_for_mode)
+    dp.message.register(lambda msg: cmd_modes(msg, db_session), Command("modes"))
+    dp.message.register(lambda msg: cmd_setmode(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), Command("setmode"))
+    dp.message.register(lambda msg: process_mode_selection(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), SetModeState.waiting_for_mode)
     
     # Команды для расписаний
-    dp.register_message_handler(cmd_schedule, commands=["schedule"], state=None)
-    dp.register_message_handler(lambda msg: process_schedule_action(msg, dp.current_state(), db_session), state=ScheduleState.waiting_for_action)
-    dp.register_message_handler(lambda msg: process_schedule_mode(msg, dp.current_state(), db_session), state=ScheduleState.waiting_for_mode)
-    dp.register_message_handler(process_schedule_start_time, state=ScheduleState.waiting_for_start_time)
-    dp.register_message_handler(process_schedule_end_time, state=ScheduleState.waiting_for_end_time)
-    dp.register_message_handler(lambda msg: process_schedule_confirmation(msg, dp.current_state(), db_session), state=ScheduleState.waiting_for_confirmation)
+    dp.message.register(cmd_schedule, Command("schedule"))
+    dp.message.register(lambda msg: process_schedule_action(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), ScheduleState.waiting_for_action)
+    dp.message.register(lambda msg: process_schedule_mode(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), ScheduleState.waiting_for_mode)
+    dp.message.register(process_schedule_start_time, ScheduleState.waiting_for_start_time)
+    dp.message.register(process_schedule_end_time, ScheduleState.waiting_for_end_time)
+    dp.message.register(lambda msg: process_schedule_confirmation(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), ScheduleState.waiting_for_confirmation)
     
     # Статус и помощь
-    dp.register_message_handler(lambda msg: cmd_status(msg, db_session), commands=["status"])
-    dp.register_message_handler(cmd_help, commands=["help"])
+    dp.message.register(lambda msg: cmd_status(msg, db_session), Command("status"))
+    dp.message.register(cmd_help, Command("help"))
     
     # Отмена
-    dp.register_message_handler(lambda msg: cmd_cancel(msg, dp.current_state()), commands=["cancel"], state="*")
-    dp.register_message_handler(lambda msg: cmd_cancel(msg, dp.current_state()), Text(equals="отмена", ignore_case=True), state="*")
+    dp.message.register(lambda msg: cmd_cancel(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id)), Command("cancel"))
+    dp.message.register(lambda msg: cmd_cancel(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id)), Text(text="отмена", ignore_case=True))
