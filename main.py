@@ -30,8 +30,8 @@ async def main():
     logger.info("Запуск приложения...")
     
     # Инициализация базы данных
-    init_db()
-    db_session = get_session()
+    engine = init_db()
+    db_session = get_session(engine)
     
     # Инициализация бота
     bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
