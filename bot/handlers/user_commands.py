@@ -3,7 +3,7 @@ from datetime import datetime
 from aiogram import Dispatcher, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import Command, Text
+from aiogram.filters import Command
 
 from db.models import User, Mode, Schedule, get_session
 from bot.keyboards import get_modes_keyboard, get_cancel_keyboard, get_yes_no_keyboard
