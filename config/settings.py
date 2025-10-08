@@ -3,7 +3,7 @@ from pathlib import Path
 
 # Базовые настройки
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(BASE_DIR / 'stratum_proxy.db'))
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://simple1:simple1@localhost/proxy_bot')
 
 # Настройки Telegram-бота
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')  # Токен Telegram-бота
