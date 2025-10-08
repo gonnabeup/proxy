@@ -39,11 +39,7 @@ async def main():
     dp = Dispatcher(storage=storage)
     
     # Инициализация прокси-сервера
-    proxy_server = StratumProxyServer(
-        host=PROXY_HOST,
-        port_range=DEFAULT_PORT_RANGE,
-        db_session=db_session
-    )
+    proxy_server = StratumProxyServer()
     
     # Инициализация планировщика
     scheduler = Scheduler(
