@@ -480,4 +480,4 @@ def register_user_handlers(dp: Dispatcher, db_session):
     
     # Отмена
     dp.message.register(lambda msg: cmd_cancel(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id)), Command("cancel"))
-    dp.message.register(lambda msg: cmd_cancel(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id)), Text(text="отмена", ignore_case=True))
+    dp.message.register(lambda msg: cmd_cancel(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id)), F.text.lower() == "отмена")
