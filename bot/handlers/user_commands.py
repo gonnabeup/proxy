@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import datetime
 from aiogram import Dispatcher, types, F
 from aiogram.fsm.context import FSMContext
@@ -451,7 +452,7 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
 def register_user_handlers(dp: Dispatcher, db_session):
     """Регистрация обработчиков пользовательских команд"""
     # Базовые команды
-    dp.message.register(lambda msg: cmd_start(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), Command("start"))
+    dp.message.register(lambda msg: asyncio.create_task(cmd_start(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session)), Command("start"))
     dp.message.register(cmd_setlogin, Command("setlogin"))
     dp.message.register(lambda msg: process_login_input(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), SetLoginState.waiting_for_login)
     

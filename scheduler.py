@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, time
 from sqlalchemy import select
 
-from db.models import User, Mode, Schedule, get_session
+from db.models import User, Mode, Schedule, get_session, init_db
 from proxy.utils import is_time_in_range
 
 logger = logging.getLogger(__name__)
@@ -62,8 +62,9 @@ class Scheduler:
         # Получаем текущее время
         now = datetime.now().time()
         
-        # Создаем сессию БД
-        db_session = get_session()
+        # Создаем engine и сессию БД
+        engine = init_db()
+        db_session = get_session(engine)
         try:
             # Получаем всех пользователей
             users = db_session.query(User).all()
