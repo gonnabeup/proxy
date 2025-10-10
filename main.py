@@ -31,7 +31,6 @@ async def main():
     
     # Инициализация базы данных
     engine = init_db()
-    db_session = get_session(engine)
     
     # Инициализация бота
     bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
@@ -49,7 +48,7 @@ async def main():
     
     try:
         # Регистрация обработчиков команд
-        register_handlers(dp, db_session)
+        register_handlers(dp)
         
         # Запуск прокси-сервера
         await proxy_server.start()
@@ -66,9 +65,6 @@ async def main():
         
         # Остановка прокси-сервера
         await proxy_server.stop()
-        
-        # Закрытие сессии БД
-        db_session.close()
         
         logger.info("Приложение остановлено")
 

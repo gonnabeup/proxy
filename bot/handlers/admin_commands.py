@@ -17,46 +17,64 @@ async def cmd_admin_help(message: types.Message):
     )
     await message.answer(help_text)
 
-async def cmd_users(message: types.Message, db_session):
+async def cmd_users(message: types.Message):
     """Обработчик команды /users"""
-    # Проверка прав администратора (пример)
-    if message.from_user.id != 123456789:  # Замените на ID администратора
-        await message.answer("У вас нет прав для выполнения этой команды.")
-        return
+    # Получаем сессию БД
+    from db.models import init_db, get_session, UserRole
+    engine = init_db()
+    db_session = get_session(engine)
     
-    users = db_session.query(User).all()
-    
-    if not users:
-        await message.answer("Пользователи не найдены.")
-        return
-    
-    response = "Список пользователей:\n\n"
-    for i, user in enumerate(users, 1):
-        response += f"{i}. ID: {user.id}, TG: {user.tg_id}, Логин: {user.login}\n"
-        response += f"   Порт: {user.port}, Подписка до: {user.subscription_until.strftime('%d.%m.%Y')}\n\n"
-    
-    await message.answer(response)
+    try:
+        # Проверка прав администратора
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        if not user or (user.role != UserRole.ADMIN and user.role != UserRole.SUPERADMIN):
+            await message.answer("У вас нет прав для выполнения этой команды.")
+            return
+        
+        users = db_session.query(User).all()
+        
+        if not users:
+            await message.answer("Пользователи не найдены.")
+            return
+        
+        response = "Список пользователей:\n\n"
+        for i, user in enumerate(users, 1):
+            response += f"{i}. ID: {user.id}, TG: {user.tg_id}, Логин: {user.login}, Роль: {user.role.value}\n"
+            response += f"   Порт: {user.port}, Подписка до: {user.subscription_until.strftime('%d.%m.%Y')}\n\n"
+        
+        await message.answer(response)
+    finally:
+        db_session.close()
 
-async def cmd_stats(message: types.Message, db_session):
+async def cmd_stats(message: types.Message):
     """Обработчик команды /stats"""
-    # Проверка прав администратора (пример)
-    if message.from_user.id != 123456789:  # Замените на ID администратора
-        await message.answer("У вас нет прав для выполнения этой команды.")
-        return
+    # Получаем сессию БД
+    from db.models import init_db, get_session, UserRole
+    engine = init_db()
+    db_session = get_session(engine)
     
-    users_count = db_session.query(User).count()
-    modes_count = db_session.query(Mode).count()
-    schedules_count = db_session.query(Schedule).count()
-    
-    response = "Статистика системы:\n\n"
-    response += f"Пользователей: {users_count}\n"
-    response += f"Режимов: {modes_count}\n"
-    response += f"Расписаний: {schedules_count}\n"
-    
-    await message.answer(response)
+    try:
+        # Проверка прав администратора
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        if not user or (user.role != UserRole.ADMIN and user.role != UserRole.SUPERADMIN):
+            await message.answer("У вас нет прав для выполнения этой команды.")
+            return
+        
+        users_count = db_session.query(User).count()
+        modes_count = db_session.query(Mode).count()
+        schedules_count = db_session.query(Schedule).count()
+        
+        response = "Статистика системы:\n\n"
+        response += f"Пользователей: {users_count}\n"
+        response += f"Режимов: {modes_count}\n"
+        response += f"Расписаний: {schedules_count}\n"
+        
+        await message.answer(response)
+    finally:
+        db_session.close()
 
-def register_admin_handlers(dp: Dispatcher, db_session):
+def register_admin_handlers(dp: Dispatcher):
     """Регистрация обработчиков административных команд"""
     dp.message.register(cmd_admin_help, Command("admin_help"))
-    dp.message.register(lambda msg: cmd_users(msg, db_session), Command("users"))
-    dp.message.register(lambda msg: cmd_stats(msg, db_session), Command("stats"))
+    dp.message.register(cmd_users, Command("users"))
+    dp.message.register(cmd_stats, Command("stats"))

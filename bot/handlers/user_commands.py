@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 
-from db.models import User, Mode, Schedule, get_session
+from db.models import User, Mode, Schedule, get_session, init_db
 from bot.keyboards import get_modes_keyboard, get_cancel_keyboard, get_yes_no_keyboard
 
 logger = logging.getLogger(__name__)
@@ -31,25 +31,33 @@ class ScheduleState(StatesGroup):
     waiting_for_end_time = State()
     waiting_for_confirmation = State()
 
-async def cmd_start(message: types.Message, state: FSMContext, db_session):
+async def cmd_start(message: types.Message, state: FSMContext = None):
     """Обработчик команды /start"""
-    user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+    # Получаем сессию БД
+    engine = init_db()
+    db_session = get_session(engine)
     
-    if user:
-        await message.answer(
-            f"Добро пожаловать, {user.username}!\n\n"
-            f"Ваш порт: {user.port}\n"
-            f"Ваш логин: {user.login}\n"
-            f"Подписка активна до: {user.subscription_until.strftime('%d.%m.%Y')}\n\n"
-            "Используйте команды для управления прокси."
-        )
-    else:
-        await message.answer(
-            "Вы не зарегистрированы в системе. Обратитесь к администратору для получения доступа."
-        )
+    try:
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        
+        if user:
+            await message.answer(
+                f"Добро пожаловать, {user.username}!\n\n"
+                f"Ваш порт: {user.port}\n"
+                f"Ваш логин: {user.login}\n"
+                f"Подписка активна до: {user.subscription_until.strftime('%d.%m.%Y')}\n\n"
+                "Используйте команды для управления прокси."
+            )
+        else:
+            await message.answer(
+                "Вы не зарегистрированы в системе. Обратитесь к администратору для получения доступа."
+            )
+    finally:
+        db_session.close()
     
-    # Сбрасываем состояние FSM
-    await state.finish()
+    # Сбрасываем состояние FSM, если оно есть
+    if state:
+        await state.clear()
 
 async def cmd_setlogin(message: types.Message, state: FSMContext):
     """Обработчик команды /setlogin"""
@@ -449,34 +457,114 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     else:
         await message.answer("Нет активного действия для отмены.")
 
-def register_user_handlers(dp: Dispatcher, db_session):
+def register_user_handlers(dp: Dispatcher):
     """Регистрация обработчиков пользовательских команд"""
     # Базовые команды
-    dp.message.register(lambda msg: asyncio.create_task(cmd_start(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session)), Command("start"))
+    dp.message.register(cmd_start, Command("start"))
     dp.message.register(cmd_setlogin, Command("setlogin"))
-    dp.message.register(lambda msg: process_login_input(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), SetLoginState.waiting_for_login)
+    
+    # Модифицируем обработчики состояний для работы с БД
+    async def process_login_input_wrapper(msg: types.Message, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_login_input(msg, state, db_session)
+        finally:
+            db_session.close()
+    
+    dp.message.register(process_login_input_wrapper, SetLoginState.waiting_for_login)
     
     # Команды для режимов
     dp.message.register(cmd_addmode, Command("addmode"))
     dp.message.register(process_mode_name, AddModeState.waiting_for_name)
     dp.message.register(process_mode_host, AddModeState.waiting_for_host)
     dp.message.register(process_mode_port, AddModeState.waiting_for_port)
-    dp.message.register(lambda msg: process_mode_alias(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), AddModeState.waiting_for_alias)
     
-    dp.message.register(lambda msg: cmd_modes(msg, db_session), Command("modes"))
-    dp.message.register(lambda msg: cmd_setmode(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), Command("setmode"))
-    dp.message.register(lambda msg: process_mode_selection(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), SetModeState.waiting_for_mode)
+    async def process_mode_alias_wrapper(msg: types.Message, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_mode_alias(msg, state, db_session)
+        finally:
+            db_session.close()
+    
+    dp.message.register(process_mode_alias_wrapper, AddModeState.waiting_for_alias)
+    
+    async def cmd_modes_wrapper(msg: types.Message):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await cmd_modes(msg, db_session)
+        finally:
+            db_session.close()
+    
+    dp.message.register(cmd_modes_wrapper, Command("modes"))
+    
+    async def cmd_setmode_wrapper(msg: types.Message, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await cmd_setmode(msg, state, db_session)
+        finally:
+            db_session.close()
+    
+    dp.message.register(cmd_setmode_wrapper, Command("setmode"))
+    
+    async def process_mode_selection_wrapper(msg: types.Message, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_mode_selection(msg, state, db_session)
+        finally:
+            db_session.close()
+    
+    dp.message.register(process_mode_selection_wrapper, SetModeState.waiting_for_mode)
     
     # Команды для расписаний
     dp.message.register(cmd_schedule, Command("schedule"))
-    dp.message.register(lambda msg: process_schedule_action(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), ScheduleState.waiting_for_action)
-    dp.message.register(lambda msg: process_schedule_mode(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), ScheduleState.waiting_for_mode)
+    
+    async def process_schedule_action_wrapper(msg: types.Message, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_schedule_action(msg, state, db_session)
+        finally:
+            db_session.close()
+    
+    dp.message.register(process_schedule_action_wrapper, ScheduleState.waiting_for_action)
+    
+    async def process_schedule_mode_wrapper(msg: types.Message, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_schedule_mode(msg, state, db_session)
+        finally:
+            db_session.close()
+    
+    dp.message.register(process_schedule_mode_wrapper, ScheduleState.waiting_for_mode)
     dp.message.register(process_schedule_start_time, ScheduleState.waiting_for_start_time)
     dp.message.register(process_schedule_end_time, ScheduleState.waiting_for_end_time)
-    dp.message.register(lambda msg: process_schedule_confirmation(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id), db_session), ScheduleState.waiting_for_confirmation)
+    
+    async def process_schedule_confirmation_wrapper(msg: types.Message, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_schedule_confirmation(msg, state, db_session)
+        finally:
+            db_session.close()
+    
+    dp.message.register(process_schedule_confirmation_wrapper, ScheduleState.waiting_for_confirmation)
     
     # Статус и помощь
-    dp.message.register(lambda msg: cmd_status(msg, db_session), Command("status"))
+    async def cmd_status_wrapper(msg: types.Message):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await cmd_status(msg, db_session)
+        finally:
+            db_session.close()
+    
+    dp.message.register(cmd_status_wrapper, Command("status"))
     dp.message.register(cmd_help, Command("help"))
     
     # Отмена
