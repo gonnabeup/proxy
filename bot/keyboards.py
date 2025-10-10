@@ -44,16 +44,20 @@ def get_modes_keyboard(modes, action="view"):
     return builder.as_markup()
 
 def get_schedule_keyboard():
-    """Клавиатура для команды расписания"""
+    """Клавиатура для команды расписания (устарела, не используется)"""
+    builder = ReplyKeyboardBuilder()
+    builder.row(KeyboardButton(text="Отмена"))
+    return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
+
+def get_schedule_action_keyboard():
+    """Клавиатура выбора действия расписания: 1, 2, 3"""
     builder = ReplyKeyboardBuilder()
     builder.row(
-        KeyboardButton(text="/schedule add"), 
-        KeyboardButton(text="/schedule list")
+        KeyboardButton(text="1"),
+        KeyboardButton(text="2"),
+        KeyboardButton(text="3")
     )
-    builder.row(
-        KeyboardButton(text="/schedule delete"), 
-        KeyboardButton(text="Отмена")
-    )
+    builder.row(KeyboardButton(text="Отмена"))
     return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 def get_schedule_list_keyboard(schedules):
@@ -65,4 +69,14 @@ def get_schedule_list_keyboard(schedules):
         button_text = f"{schedule.mode.name}: {schedule.start_time}-{schedule.end_time}"
         builder.row(InlineKeyboardButton(text=button_text, callback_data=callback_data))
     
+    return builder.as_markup()
+
+def get_pool_link_keyboard(url: str = "https://btc.f2pool.com"):
+    """Инлайн-клавиатура с тремя кнопками, ведущими на указанный URL"""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="1", url=url),
+        InlineKeyboardButton(text="2", url=url),
+        InlineKeyboardButton(text="3", url=url),
+    )
     return builder.as_markup()

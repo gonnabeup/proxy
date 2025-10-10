@@ -7,7 +7,15 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 
 from db.models import User, Mode, Schedule, get_session, init_db, UserRole
-from bot.keyboards import get_modes_keyboard, get_cancel_keyboard, get_yes_no_keyboard, get_main_keyboard
+from bot.keyboards import (
+    get_modes_keyboard,
+    get_cancel_keyboard,
+    get_yes_no_keyboard,
+    get_main_keyboard,
+    get_schedule_action_keyboard,
+    get_schedule_list_keyboard,
+    get_pool_link_keyboard,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +294,7 @@ async def cmd_schedule(message: types.Message, state: FSMContext):
         "1. Добавить расписание (add)\n"
         "2. Показать расписания (list)\n"
         "3. Удалить расписание (delete)",
-        reply_markup=get_cancel_keyboard()
+        reply_markup=get_schedule_action_keyboard()
     )
 
 async def process_schedule_action(message: types.Message, state: FSMContext, db_session):
@@ -305,7 +313,7 @@ async def process_schedule_action(message: types.Message, state: FSMContext, db_
         await state.set_state(ScheduleState.waiting_for_mode)
         await message.answer(
             "Выберите режим для расписания:",
-            reply_markup=get_modes_keyboard(modes)
+            reply_markup=get_modes_keyboard(modes, action="schedule")
         )
     
     elif action in ['list', '2', 'список']:
@@ -313,13 +321,22 @@ async def process_schedule_action(message: types.Message, state: FSMContext, db_
         await state.clear()
     
     elif action in ['delete', '3', 'удалить']:
-        # Логика удаления расписания
+        # Показ списка расписаний с кнопками удаления
         user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
-        is_admin = bool(user and user.role in (UserRole.ADMIN, UserRole.SUPERADMIN))
+        if not user:
+            await message.answer("Вы не зарегистрированы в системе.")
+            await state.clear()
+            return
+        schedules = db_session.query(Schedule).filter(Schedule.user_id == user.id).all()
+        if not schedules:
+            await message.answer("У вас пока нет добавленных расписаний.")
+            await state.clear()
+            return
         await message.answer(
-            "Функция удаления расписания будет доступна в следующей версии.",
-            reply_markup=get_main_keyboard(is_admin=is_admin)
+            "Выберите расписание для удаления:",
+            reply_markup=get_schedule_list_keyboard(schedules)
         )
+        # Состояние можно сбросить, удаление обработаем через callback
         await state.clear()
     
     else:
@@ -348,6 +365,60 @@ async def process_schedule_mode(message: types.Message, state: FSMContext, db_se
         )
     except ValueError:
         await message.answer("Пожалуйста, введите номер режима.")
+
+async def process_schedule_mode_callback(callback: types.CallbackQuery, state: FSMContext, db_session):
+    """Обработка выбора режима для расписания через инлайн-кнопки"""
+    data = callback.data  # ожидаем формат: schedule_mode_<id>
+    try:
+        mode_id = int(data.split("_")[-1])
+        user = db_session.query(User).filter(User.tg_id == callback.from_user.id).first()
+        if not user:
+            await callback.message.answer("Вы не зарегистрированы в системе.")
+            await callback.answer()
+            return
+        mode = db_session.query(Mode).filter(Mode.id == mode_id, Mode.user_id == user.id).first()
+        if not mode:
+            await callback.message.answer("Режим не найден. Попробуйте еще раз.")
+            await callback.answer()
+            return
+
+        # Сохраняем выбранный режим и переходим к вводу времени начала
+        await state.update_data(mode_id=mode.id, mode_name=mode.name)
+        await state.set_state(ScheduleState.waiting_for_start_time)
+        await callback.message.answer(
+            "Введите время начала в формате ЧЧ:ММ (например, 08:30):",
+            reply_markup=get_cancel_keyboard()
+        )
+    except Exception:
+        await callback.message.answer("Ошибка обработки выбора режима. Попробуйте снова.")
+    finally:
+        await callback.answer()
+
+async def process_schedule_delete_callback(callback: types.CallbackQuery):
+    """Удаление расписания по инлайн-кнопке delete_schedule_<id>"""
+    data = callback.data  # ожидаем формат: delete_schedule_<id>
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        schedule_id = int(data.split("_")[-1])
+        schedule = db_session.query(Schedule).filter(Schedule.id == schedule_id).first()
+        if not schedule:
+            await callback.message.answer("Расписание не найдено.")
+            await callback.answer()
+            return
+        user = db_session.query(User).filter(User.id == schedule.user_id).first()
+        is_admin = bool(user and user.role in (UserRole.ADMIN, UserRole.SUPERADMIN))
+        db_session.delete(schedule)
+        db_session.commit()
+        await callback.message.answer(
+            "Расписание удалено.",
+            reply_markup=get_main_keyboard(is_admin=is_admin)
+        )
+    except Exception:
+        await callback.message.answer("Ошибка удаления расписания. Попробуйте снова.")
+    finally:
+        await callback.answer()
+        db_session.close()
 
 async def process_schedule_start_time(message: types.Message, state: FSMContext):
     """Обработка ввода времени начала расписания"""
@@ -509,9 +580,9 @@ async def cmd_help(message: types.Message):
         )
         if user:
             connection_line = f"Строка подключения: 12v5a.tplinkdns.com:{user.port}, логин: {user.login}, пароль: x"
-            await message.answer(commands_block + connection_line)
+            await message.answer(commands_block + connection_line, reply_markup=get_pool_link_keyboard())
         else:
-            await message.answer(commands_block + "Вы не зарегистрированы в системе. Обратитесь к администратору.")
+            await message.answer(commands_block + "Вы не зарегистрированы в системе. Обратитесь к администратору.", reply_markup=get_pool_link_keyboard())
     finally:
         db_session.close()
 
@@ -634,6 +705,16 @@ def register_user_handlers(dp: Dispatcher):
             db_session.close()
     
     dp.message.register(process_schedule_mode_wrapper, ScheduleState.waiting_for_mode)
+
+    # Callback для выбора режима при создании расписания
+    async def process_schedule_mode_callback_wrapper(cb: types.CallbackQuery, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_schedule_mode_callback(cb, state, db_session)
+        finally:
+            db_session.close()
+    dp.callback_query.register(process_schedule_mode_callback_wrapper, F.data.startswith("schedule_mode_"))
     dp.message.register(process_schedule_start_time, ScheduleState.waiting_for_start_time)
     dp.message.register(process_schedule_end_time, ScheduleState.waiting_for_end_time)
     
@@ -646,6 +727,9 @@ def register_user_handlers(dp: Dispatcher):
             db_session.close()
     
     dp.message.register(process_schedule_confirmation_wrapper, ScheduleState.waiting_for_confirmation)
+
+    # Callback для удаления расписания
+    dp.callback_query.register(process_schedule_delete_callback, F.data.startswith("delete_schedule_"))
     
     # Статус и помощь
     async def cmd_status_wrapper(msg: types.Message):
