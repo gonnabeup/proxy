@@ -64,8 +64,16 @@ class Schedule(Base):
     def __repr__(self):
         return f"<Schedule(id={self.id}, mode_id={self.mode_id}, start_time={self.start_time}, end_time={self.end_time})>"
 
-def init_db(db_url="sqlite:///stratum_proxy.db"):
+def init_db(db_url=None):
     """Инициализация базы данных"""
+    # Если URL базы не передан, используем значение из настроек
+    if db_url is None:
+        try:
+            from config.settings import DATABASE_URL
+            db_url = DATABASE_URL
+        except Exception:
+            # Фолбэк на локальную SQLite, если настройки недоступны
+            db_url = "sqlite:///stratum_proxy.db"
     engine = create_engine(db_url)
     Base.metadata.create_all(engine)
     return engine

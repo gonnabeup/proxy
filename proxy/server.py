@@ -23,7 +23,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class StratumProxyServer:
-    def __init__(self, db_url="sqlite:///stratum_proxy.db"):
+    def __init__(self, db_url=None):
+        # Если URL не передан, init_db возьмет DATABASE_URL из настроек
         self.db_engine = init_db(db_url)
         self.db_session = get_session(self.db_engine)
         self.router = StratumRouter(self.db_session)
