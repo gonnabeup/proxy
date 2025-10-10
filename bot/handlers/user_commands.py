@@ -63,7 +63,7 @@ async def cmd_start(message: types.Message, state: FSMContext = None):
 
 async def cmd_setlogin(message: types.Message, state: FSMContext):
     """Обработчик команды /setlogin"""
-    await SetLoginState.waiting_for_login.set()
+    await state.set_state(SetLoginState.waiting_for_login)
     await message.answer(
         "Введите новый логин для ваших воркеров:",
         reply_markup=get_cancel_keyboard()
@@ -87,11 +87,11 @@ async def process_login_input(message: types.Message, state: FSMContext, db_sess
         await message.answer("Вы не зарегистрированы в системе.")
     
     # Сбрасываем состояние FSM
-    await state.finish()
+    await state.clear()
 
 async def cmd_addmode(message: types.Message, state: FSMContext):
     """Обработчик команды /addmode"""
-    await AddModeState.waiting_for_name.set()
+    await state.set_state(AddModeState.waiting_for_name)
     await message.answer(
         "Введите название режима (например, 'f2pool btc'):",
         reply_markup=get_cancel_keyboard()
@@ -105,7 +105,7 @@ async def process_mode_name(message: types.Message, state: FSMContext):
     await state.update_data(name=mode_name)
     
     # Переходим к следующему шагу
-    await AddModeState.waiting_for_host.set()
+    await state.set_state(AddModeState.waiting_for_host)
     await message.answer("Введите хост пула (например, 'btc.f2pool.com'):")
 
 async def process_mode_host(message: types.Message, state: FSMContext):
@@ -116,7 +116,7 @@ async def process_mode_host(message: types.Message, state: FSMContext):
     await state.update_data(host=mode_host)
     
     # Переходим к следующему шагу
-    await AddModeState.waiting_for_port.set()
+    await state.set_state(AddModeState.waiting_for_port)
     await message.answer("Введите порт пула (например, '3333'):")
 
 async def process_mode_port(message: types.Message, state: FSMContext):
@@ -128,7 +128,7 @@ async def process_mode_port(message: types.Message, state: FSMContext):
         await state.update_data(port=mode_port)
         
         # Переходим к следующему шагу
-        await AddModeState.waiting_for_alias.set()
+        await state.set_state(AddModeState.waiting_for_alias)
         await message.answer("Введите алиас для пула (например, 'smagin83'):")
     except ValueError:
         await message.answer("Порт должен быть числом. Попробуйте еще раз:")
@@ -167,7 +167,7 @@ async def process_mode_alias(message: types.Message, state: FSMContext, db_sessi
         await message.answer("Вы не зарегистрированы в системе.")
     
     # Сбрасываем состояние FSM
-    await state.finish()
+    await state.clear()
 
 async def cmd_modes(message: types.Message, db_session):
     """Обработчик команды /modes"""
@@ -205,11 +205,40 @@ async def cmd_setmode(message: types.Message, state: FSMContext, db_session):
         await message.answer("У вас пока нет добавленных режимов. Используйте /addmode для добавления.")
         return
     
-    await SetModeState.waiting_for_mode.set()
+    await state.set_state(SetModeState.waiting_for_mode)
     await message.answer(
         "Выберите режим для активации:",
-        reply_markup=get_modes_keyboard(modes)
+        reply_markup=get_modes_keyboard(modes, action="set")
     )
+
+async def process_mode_callback(callback: types.CallbackQuery, state: FSMContext, db_session):
+    """Обработка инлайн-выбора режима через callback_data"""
+    data = callback.data  # ожидаем формат: set_mode_<id>
+    try:
+        mode_id = int(data.split("_")[-1])
+        user = db_session.query(User).filter(User.tg_id == callback.from_user.id).first()
+        if not user:
+            await callback.message.answer("Вы не зарегистрированы в системе.")
+            await callback.answer()
+            return
+
+        mode = db_session.query(Mode).filter(Mode.id == mode_id, Mode.user_id == user.id).first()
+        if not mode:
+            await callback.message.answer("Режим не найден. Попробуйте еще раз.")
+            await callback.answer()
+            return
+
+        # Деактивируем предыдущий режим, активируем выбранный
+        db_session.query(Mode).filter(Mode.user_id == user.id, Mode.is_active == 1).update({Mode.is_active: 0})
+        mode.is_active = 1
+        db_session.commit()
+
+        await callback.message.answer(f"Активный режим установлен: {mode.name}")
+    except Exception:
+        await callback.message.answer("Ошибка обработки выбора режима. Попробуйте снова.")
+    finally:
+        await callback.answer()
+        await state.clear()
 
 async def process_mode_selection(message: types.Message, state: FSMContext, db_session):
     """Обработка выбора режима"""
@@ -223,8 +252,9 @@ async def process_mode_selection(message: types.Message, state: FSMContext, db_s
             await message.answer("Режим не найден. Попробуйте еще раз.")
             return
         
-        # Устанавливаем выбранный режим как активный
-        user.active_mode_id = mode.id
+        # Снимаем флаг активности у предыдущего режима и активируем выбранный
+        db_session.query(Mode).filter(Mode.user_id == user.id, Mode.is_active == 1).update({Mode.is_active: 0})
+        mode.is_active = 1
         db_session.commit()
         
         await message.answer(f"Активный режим установлен: {mode.name}")
@@ -232,11 +262,11 @@ async def process_mode_selection(message: types.Message, state: FSMContext, db_s
         await message.answer("Пожалуйста, введите номер режима.")
     finally:
         # Сбрасываем состояние FSM
-        await state.finish()
+        await state.clear()
 
 async def cmd_schedule(message: types.Message, state: FSMContext):
     """Обработчик команды /schedule"""
-    await ScheduleState.waiting_for_action.set()
+    await state.set_state(ScheduleState.waiting_for_action)
     await message.answer(
         "Выберите действие:\n"
         "1. Добавить расписание (add)\n"
@@ -255,10 +285,10 @@ async def process_schedule_action(message: types.Message, state: FSMContext, db_
         
         if not modes:
             await message.answer("У вас пока нет добавленных режимов. Используйте /addmode для добавления.")
-            await state.finish()
+            await state.clear()
             return
         
-        await ScheduleState.waiting_for_mode.set()
+        await state.set_state(ScheduleState.waiting_for_mode)
         await message.answer(
             "Выберите режим для расписания:",
             reply_markup=get_modes_keyboard(modes)
@@ -266,12 +296,12 @@ async def process_schedule_action(message: types.Message, state: FSMContext, db_
     
     elif action in ['list', '2', 'список']:
         await show_schedules(message, db_session)
-        await state.finish()
+        await state.clear()
     
     elif action in ['delete', '3', 'удалить']:
         # Логика удаления расписания
         await message.answer("Функция удаления расписания будет доступна в следующей версии.")
-        await state.finish()
+        await state.clear()
     
     else:
         await message.answer("Неизвестное действие. Пожалуйста, выберите из списка.")
@@ -292,7 +322,7 @@ async def process_schedule_mode(message: types.Message, state: FSMContext, db_se
         await state.update_data(mode_id=mode.id, mode_name=mode.name)
         
         # Переходим к следующему шагу
-        await ScheduleState.waiting_for_start_time.set()
+        await state.set_state(ScheduleState.waiting_for_start_time)
         await message.answer(
             "Введите время начала в формате ЧЧ:ММ (например, 08:30):",
             reply_markup=get_cancel_keyboard()
@@ -312,7 +342,7 @@ async def process_schedule_start_time(message: types.Message, state: FSMContext)
         await state.update_data(start_time=start_time)
         
         # Переходим к следующему шагу
-        await ScheduleState.waiting_for_end_time.set()
+        await state.set_state(ScheduleState.waiting_for_end_time)
         await message.answer("Введите время окончания в формате ЧЧ:ММ (например, 16:30):")
     except ValueError:
         await message.answer("Неверный формат времени. Используйте формат ЧЧ:ММ (например, 08:30).")
@@ -334,7 +364,7 @@ async def process_schedule_end_time(message: types.Message, state: FSMContext):
         start_time = data.get('start_time')
         
         # Переходим к подтверждению
-        await ScheduleState.waiting_for_confirmation.set()
+        await state.set_state(ScheduleState.waiting_for_confirmation)
         await message.answer(
             f"Подтвердите создание расписания:\n\n"
             f"Режим: {mode_name}\n"
@@ -378,7 +408,7 @@ async def process_schedule_confirmation(message: types.Message, state: FSMContex
         await message.answer("Создание расписания отменено.")
     
     # Сбрасываем состояние FSM
-    await state.finish()
+    await state.clear()
 
 async def show_schedules(message: types.Message, db_session):
     """Показать список расписаний пользователя"""
@@ -412,9 +442,8 @@ async def cmd_status(message: types.Message, db_session):
         await message.answer("Вы не зарегистрированы в системе.")
         return
     
-    active_mode = None
-    if user.active_mode_id:
-        active_mode = db_session.query(Mode).filter(Mode.id == user.active_mode_id).first()
+    # Определяем активный режим по флагу is_active
+    active_mode = db_session.query(Mode).filter(Mode.user_id == user.id, Mode.is_active == 1).first()
     
     response = f"Ваш статус:\n\n"
     response += f"Порт: {user.port}\n"
@@ -432,29 +461,36 @@ async def cmd_status(message: types.Message, db_session):
 
 async def cmd_help(message: types.Message):
     """Обработчик команды /help"""
-    help_text = (
-        "Доступные команды:\n\n"
-        "/start - Начать работу с ботом\n"
-        "/setlogin - Задать/изменить логин для воркеров\n"
-        "/addmode - Добавить новый режим пула\n"
-        "/modes - Показать список ваших режимов\n"
-        "/setmode - Выбрать активный режим\n"
-        "/schedule - Управление расписанием\n"
-        "/status - Показать текущий статус\n"
-        "/help - Показать эту справку\n\n"
-        "Для подключения майнеров используйте:\n"
-        "Хост: <code>IP-адрес сервера</code>\n"
-        "Порт: <code>Ваш уникальный порт</code>\n"
-        "Логин: <code>Ваш логин</code>\n"
-        "Пароль: x"
-    )
-    await message.answer(help_text)
+    # Создаем сессию БД, чтобы получить порт и логин пользователя
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        # Блок команд
+        commands_block = (
+            "Доступные команды:\n\n"
+            "/start - Начать работу с ботом\n"
+            "/setlogin - Задать/изменить логин для воркеров\n"
+            "/addmode - Добавить новый режим пула\n"
+            "/modes - Показать список ваших режимов\n"
+            "/setmode - Выбрать активный режим\n"
+            "/schedule - Управление расписанием\n"
+            "/status - Показать текущий статус\n"
+            "/help - Показать эту справку\n\n"
+        )
+        if user:
+            connection_line = f"Строка подключения: 12v5a.tplinkdns.com:{user.port}, логин: {user.login}, пароль: x"
+            await message.answer(commands_block + connection_line)
+        else:
+            await message.answer(commands_block + "Вы не зарегистрированы в системе. Обратитесь к администратору.")
+    finally:
+        db_session.close()
 
 async def cmd_cancel(message: types.Message, state: FSMContext):
     """Обработчик команды отмены"""
     current_state = await state.get_state()
     if current_state is not None:
-        await state.finish()
+        await state.clear()
         await message.answer("Действие отменено.")
     else:
         await message.answer("Нет активного действия для отмены.")
@@ -521,6 +557,16 @@ def register_user_handlers(dp: Dispatcher):
             db_session.close()
     
     dp.message.register(process_mode_selection_wrapper, SetModeState.waiting_for_mode)
+
+    # Callback для выбора режима из инлайн-клавиатуры
+    async def process_mode_callback_wrapper(cb: types.CallbackQuery, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_mode_callback(cb, state, db_session)
+        finally:
+            db_session.close()
+    dp.callback_query.register(process_mode_callback_wrapper, F.data.startswith("set_mode_"))
     
     # Команды для расписаний
     dp.message.register(cmd_schedule, Command("schedule"))

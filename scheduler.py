@@ -84,18 +84,23 @@ class Scheduler:
                     
                     # Проверяем, находится ли текущее время в диапазоне расписания
                     if is_time_in_range(now, start_time, end_time):
+                        # Текущий активный режим пользователя
+                        active_mode = db_session.query(Mode).filter(Mode.user_id == user.id, Mode.is_active == 1).first()
                         # Если текущий активный режим не соответствует расписанию
-                        if user.active_mode_id != schedule.mode_id:
+                        if not active_mode or active_mode.id != schedule.mode_id:
                             logger.info(f"Обновление режима для пользователя {user.username} (ID: {user.id}) "
                                        f"согласно расписанию. Новый режим ID: {schedule.mode_id}")
-                            
-                            # Обновляем активный режим пользователя
-                            user.active_mode_id = schedule.mode_id
-                            db_session.commit()
-                            
-                            # Уведомляем прокси-сервер об изменении режима
-                            if self.proxy_server:
-                                await self.proxy_server.reload_port(user.port)
+
+                            # Снимаем активность у предыдущего режима и активируем режим из расписания
+                            db_session.query(Mode).filter(Mode.user_id == user.id, Mode.is_active == 1).update({Mode.is_active: 0})
+                            mode_to_activate = db_session.query(Mode).filter(Mode.id == schedule.mode_id, Mode.user_id == user.id).first()
+                            if mode_to_activate:
+                                mode_to_activate.is_active = 1
+                                db_session.commit()
+                                
+                                # Уведомляем прокси-сервер об изменении режима
+                                if self.proxy_server:
+                                    await self.proxy_server.reload_port(user.port)
         
         finally:
             db_session.close()
