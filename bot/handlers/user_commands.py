@@ -6,8 +6,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 
-from db.models import User, Mode, Schedule, get_session, init_db
-from bot.keyboards import get_modes_keyboard, get_cancel_keyboard, get_yes_no_keyboard
+from db.models import User, Mode, Schedule, get_session, init_db, UserRole
+from bot.keyboards import get_modes_keyboard, get_cancel_keyboard, get_yes_no_keyboard, get_main_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ async def cmd_start(message: types.Message, state: FSMContext = None):
     
     try:
         user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        is_admin = bool(user and (user.role in (UserRole.ADMIN, UserRole.SUPERADMIN)))
         
         if user:
             await message.answer(
@@ -46,7 +47,8 @@ async def cmd_start(message: types.Message, state: FSMContext = None):
                 f"Ваш порт: {user.port}\n"
                 f"Ваш логин: {user.login}\n"
                 f"Подписка активна до: {user.subscription_until.strftime('%d.%m.%Y')}\n\n"
-                "Используйте команды для управления прокси."
+                "Используйте команды для управления прокси.",
+                reply_markup=get_main_keyboard(is_admin=is_admin)
             )
         else:
             await message.answer(
