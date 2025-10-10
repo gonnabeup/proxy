@@ -82,7 +82,11 @@ async def process_login_input(message: types.Message, state: FSMContext, db_sess
     if user:
         user.login = new_login
         db_session.commit()
-        await message.answer(f"Логин успешно изменен на: {new_login}")
+        is_admin = user.role in (UserRole.ADMIN, UserRole.SUPERADMIN)
+        await message.answer(
+            f"Логин успешно изменен на: {new_login}",
+            reply_markup=get_main_keyboard(is_admin=is_admin)
+        )
     else:
         await message.answer("Вы не зарегистрированы в системе.")
     
@@ -156,12 +160,14 @@ async def process_mode_alias(message: types.Message, state: FSMContext, db_sessi
         db_session.add(new_mode)
         db_session.commit()
         
+        is_admin = user.role in (UserRole.ADMIN, UserRole.SUPERADMIN)
         await message.answer(
             f"Режим успешно добавлен!\n\n"
             f"Название: {name}\n"
             f"Хост: {host}\n"
             f"Порт: {port}\n"
-            f"Алиас: {mode_alias}"
+            f"Алиас: {mode_alias}",
+            reply_markup=get_main_keyboard(is_admin=is_admin)
         )
     else:
         await message.answer("Вы не зарегистрированы в системе.")
@@ -233,7 +239,11 @@ async def process_mode_callback(callback: types.CallbackQuery, state: FSMContext
         mode.is_active = 1
         db_session.commit()
 
-        await callback.message.answer(f"Активный режим установлен: {mode.name}")
+        is_admin = user.role in (UserRole.ADMIN, UserRole.SUPERADMIN)
+        await callback.message.answer(
+            f"Активный режим установлен: {mode.name}",
+            reply_markup=get_main_keyboard(is_admin=is_admin)
+        )
     except Exception:
         await callback.message.answer("Ошибка обработки выбора режима. Попробуйте снова.")
     finally:
@@ -257,7 +267,11 @@ async def process_mode_selection(message: types.Message, state: FSMContext, db_s
         mode.is_active = 1
         db_session.commit()
         
-        await message.answer(f"Активный режим установлен: {mode.name}")
+        is_admin = user.role in (UserRole.ADMIN, UserRole.SUPERADMIN)
+        await message.answer(
+            f"Активный режим установлен: {mode.name}",
+            reply_markup=get_main_keyboard(is_admin=is_admin)
+        )
     except ValueError:
         await message.answer("Пожалуйста, введите номер режима.")
     finally:
@@ -300,7 +314,12 @@ async def process_schedule_action(message: types.Message, state: FSMContext, db_
     
     elif action in ['delete', '3', 'удалить']:
         # Логика удаления расписания
-        await message.answer("Функция удаления расписания будет доступна в следующей версии.")
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        is_admin = bool(user and user.role in (UserRole.ADMIN, UserRole.SUPERADMIN))
+        await message.answer(
+            "Функция удаления расписания будет доступна в следующей версии.",
+            reply_markup=get_main_keyboard(is_admin=is_admin)
+        )
         await state.clear()
     
     else:
@@ -401,11 +420,21 @@ async def process_schedule_confirmation(message: types.Message, state: FSMContex
             db_session.add(new_schedule)
             db_session.commit()
             
-            await message.answer("Расписание успешно создано!")
+            is_admin = user.role in (UserRole.ADMIN, UserRole.SUPERADMIN)
+            await message.answer(
+                "Расписание успешно создано!",
+                reply_markup=get_main_keyboard(is_admin=is_admin)
+            )
         else:
             await message.answer("Вы не зарегистрированы в системе.")
     else:
-        await message.answer("Создание расписания отменено.")
+        # Показываем основную клавиатуру после отмены
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        is_admin = bool(user and user.role in (UserRole.ADMIN, UserRole.SUPERADMIN))
+        await message.answer(
+            "Создание расписания отменено.",
+            reply_markup=get_main_keyboard(is_admin=is_admin)
+        )
     
     # Сбрасываем состояние FSM
     await state.clear()
@@ -431,8 +460,8 @@ async def show_schedules(message: types.Message, db_session):
         
         response += f"{i}. {mode_name}\n"
         response += f"   Время: {schedule.start_time} - {schedule.end_time}\n\n"
-    
-    await message.answer(response)
+    is_admin = user.role in (UserRole.ADMIN, UserRole.SUPERADMIN)
+    await message.answer(response, reply_markup=get_main_keyboard(is_admin=is_admin))
 
 async def cmd_status(message: types.Message, db_session):
     """Обработчик команды /status"""
@@ -491,9 +520,24 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is not None:
         await state.clear()
-        await message.answer("Действие отменено.")
+        # Показываем основную клавиатуру после отмены
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+            is_admin = bool(user and user.role in (UserRole.ADMIN, UserRole.SUPERADMIN))
+            await message.answer("Действие отменено.", reply_markup=get_main_keyboard(is_admin=is_admin))
+        finally:
+            db_session.close()
     else:
-        await message.answer("Нет активного действия для отмены.")
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+            is_admin = bool(user and user.role in (UserRole.ADMIN, UserRole.SUPERADMIN))
+            await message.answer("Нет активного действия для отмены.", reply_markup=get_main_keyboard(is_admin=is_admin))
+        finally:
+            db_session.close()
 
 def register_user_handlers(dp: Dispatcher):
     """Регистрация обработчиков пользовательских команд"""
