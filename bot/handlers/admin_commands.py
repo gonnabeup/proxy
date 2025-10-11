@@ -73,8 +73,172 @@ async def cmd_stats(message: types.Message):
     finally:
         db_session.close()
 
+def _split_args(text: str):
+    try:
+        parts = (text or "").strip().split()
+        # отбрасываем саму команду
+        if parts and parts[0].startswith('/'):
+            parts = parts[1:]
+        return parts
+    except Exception:
+        return []
+
+async def cmd_listusers(message: types.Message):
+    """Алиас для /users"""
+    await cmd_users(message)
+
+async def cmd_freerange(message: types.Message):
+    """Показать свободные порты в DEFAULT_PORT_RANGE"""
+    from db.models import init_db, get_session, User
+    from config.settings import DEFAULT_PORT_RANGE
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        start, end = DEFAULT_PORT_RANGE
+        used = {u.port for u in db_session.query(User).all()}
+        free = [p for p in range(start, end + 1) if p not in used]
+        if not free:
+            await message.answer("Свободных портов нет в заданном диапазоне.")
+            return
+        # ограничим вывод, чтобы не заспамить чат
+        preview = free[:100]
+        tail = "" if len(free) <= 100 else f" … и ещё {len(free)-100}"
+        await message.answer("Свободные порты:\n" + ", ".join(map(str, preview)) + tail)
+    finally:
+        db_session.close()
+
+async def cmd_setport(message: types.Message):
+    """Назначить порт пользователю: /setport <tg_id> <port>"""
+    from db.models import init_db, get_session, User, UserRole
+    from config.settings import DEFAULT_PORT_RANGE
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        # проверка прав
+        admin = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        if not admin or admin.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+            await message.answer("У вас нет прав для выполнения этой команды.")
+            return
+
+        args = _split_args(message.text)
+        if len(args) != 2:
+            await message.answer("Использование: /setport <tg_id> <port>")
+            return
+        try:
+            tg_id = int(args[0])
+            new_port = int(args[1])
+        except ValueError:
+            await message.answer("tg_id и port должны быть числами.")
+            return
+        start, end = DEFAULT_PORT_RANGE
+        if not (start <= new_port <= end):
+            await message.answer(f"Порт вне диапазона {start}-{end}.")
+            return
+        # проверка занятости порта
+        if db_session.query(User).filter(User.port == new_port).first():
+            await message.answer("Порт уже занят другим пользователем.")
+            return
+        user = db_session.query(User).filter(User.tg_id == tg_id).first()
+        if not user:
+            await message.answer("Пользователь с таким tg_id не найден.")
+            return
+        old_port = user.port
+        user.port = new_port
+        db_session.commit()
+        await message.answer(f"Порт пользователя {user.username or tg_id} изменён: {old_port} → {new_port}.")
+        # Примечание: перезагрузка конкретного порта выполняется планировщиком/сервером;
+        # при необходимости можно инициировать reload_port здесь, если объект сервера доступен.
+    finally:
+        db_session.close()
+
+async def cmd_setsub(message: types.Message):
+    """Установить дату подписки: /setsub <tg_id> <DD.MM.YYYY>"""
+    import datetime
+    from db.models import init_db, get_session, User, UserRole
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        admin = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        if not admin or admin.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+            await message.answer("У вас нет прав для выполнения этой команды.")
+            return
+        args = _split_args(message.text)
+        if len(args) != 2:
+            await message.answer("Использование: /setsub <tg_id> <DD.MM.YYYY>")
+            return
+        try:
+            tg_id = int(args[0])
+            until = datetime.datetime.strptime(args[1], "%d.%m.%Y")
+            # выставим конец дня, чтобы дата была включительно
+            until = until.replace(hour=23, minute=59, second=59)
+        except Exception:
+            await message.answer("Неверный формат. Ожидается дата в формате DD.MM.YYYY.")
+            return
+        user = db_session.query(User).filter(User.tg_id == tg_id).first()
+        if not user:
+            await message.answer("Пользователь с таким tg_id не найден.")
+            return
+        user.subscription_until = until
+        db_session.commit()
+        await message.answer(f"Подписка пользователя {user.username or tg_id} установлена до {until.strftime('%d.%m.%Y')}.")
+    finally:
+        db_session.close()
+
+async def cmd_adduser(message: types.Message):
+    """Добавить пользователя: /adduser <tg_id> <username> <port> <login>"""
+    import datetime
+    from db.models import init_db, get_session, User, UserRole
+    from config.settings import DEFAULT_PORT_RANGE
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        admin = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        if not admin or admin.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+            await message.answer("У вас нет прав для выполнения этой команды.")
+            return
+        args = _split_args(message.text)
+        if len(args) < 4:
+            await message.answer("Использование: /adduser <tg_id> <username> <port> <login>")
+            return
+        try:
+            tg_id = int(args[0])
+            username = args[1]
+            port = int(args[2])
+            login = args[3]
+        except Exception:
+            await message.answer("Неверные аргументы. Проверьте формат.")
+            return
+        start, end = DEFAULT_PORT_RANGE
+        if not (start <= port <= end):
+            await message.answer(f"Порт вне диапазона {start}-{end}.")
+            return
+        if db_session.query(User).filter((User.tg_id == tg_id) | (User.port == port)).first():
+            await message.answer("Пользователь с таким tg_id или порт уже существует.")
+            return
+        user = User(
+            tg_id=tg_id,
+            username=username,
+            role=UserRole.USER,
+            port=port,
+            login=login,
+            timezone='UTC',
+            subscription_until=datetime.datetime.now() + datetime.timedelta(days=30)
+        )
+        db_session.add(user)
+        db_session.commit()
+        await message.answer(f"Пользователь добавлен: {username} (tg_id={tg_id}), порт {port}, логин {login}.")
+    finally:
+        db_session.close()
+
 def register_admin_handlers(dp: Dispatcher):
     """Регистрация обработчиков административных команд"""
+    # существующие команды
     dp.message.register(cmd_admin_help, Command("admin_help"))
     dp.message.register(cmd_users, Command("users"))
     dp.message.register(cmd_stats, Command("stats"))
+    # новые команды и алиасы, соответствующие клавиатуре/README
+    dp.message.register(cmd_adduser, Command("adduser"))
+    dp.message.register(cmd_setsub, Command("setsub"))
+    dp.message.register(cmd_setport, Command("setport"))
+    dp.message.register(cmd_freerange, Command("freerange"))
+    dp.message.register(cmd_listusers, Command("listusers"))

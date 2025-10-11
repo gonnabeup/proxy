@@ -146,9 +146,8 @@ async def process_mode_name(message: types.Message, state: FSMContext):
     """Обработка ввода названия режима"""
     mode_name = message.text.strip()
     if _is_cancel_text(mode_name):
-        await state.clear()
-        # Возврат основной клавиатуры
-        await message.answer("Действие отменено.")
+        # Унифицированная отмена с показом основной клавиатуры
+        await cmd_cancel(message, state)
         return
     
     # Сохраняем название в состоянии
@@ -162,8 +161,7 @@ async def process_mode_host(message: types.Message, state: FSMContext):
     """Обработка ввода хоста пула"""
     mode_host = message.text.strip()
     if _is_cancel_text(mode_host):
-        await state.clear()
-        await message.answer("Действие отменено.")
+        await cmd_cancel(message, state)
         return
     
     # Сохраняем хост в состоянии
@@ -178,8 +176,7 @@ async def process_mode_port(message: types.Message, state: FSMContext):
     try:
         text = message.text.strip()
         if _is_cancel_text(text):
-            await state.clear()
-            await message.answer("Действие отменено.")
+            await cmd_cancel(message, state)
             return
         mode_port = int(text)
         
@@ -196,8 +193,7 @@ async def process_mode_alias(message: types.Message, state: FSMContext, db_sessi
     """Обработка ввода алиаса для пула"""
     mode_alias = message.text.strip()
     if _is_cancel_text(mode_alias):
-        await state.clear()
-        await message.answer("Действие отменено.")
+        await cmd_cancel(message, state)
         return
     
     # Получаем все данные из состояния
@@ -488,8 +484,7 @@ async def process_schedule_start_time(message: types.Message, state: FSMContext)
     """Обработка ввода времени начала расписания"""
     start_time = message.text.strip()
     if _is_cancel_text(start_time):
-        await state.clear()
-        await message.answer("Действие отменено.")
+        await cmd_cancel(message, state)
         return
     
     # Проверяем формат времени
@@ -509,8 +504,7 @@ async def process_schedule_end_time(message: types.Message, state: FSMContext):
     """Обработка ввода времени окончания расписания"""
     end_time = message.text.strip()
     if _is_cancel_text(end_time):
-        await state.clear()
-        await message.answer("Действие отменено.")
+        await cmd_cancel(message, state)
         return
     
     # Проверяем формат времени
