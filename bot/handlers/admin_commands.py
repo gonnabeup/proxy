@@ -122,7 +122,7 @@ async def cmd_setport(message: types.Message):
 
         args = _split_args(message.text)
         if len(args) != 2:
-            await message.answer("Использование: /setport <tg_id> <port>")
+            await message.answer("Использование: /setport tg_id port\nНапример: /setport 1146015328 4100")
             return
         try:
             tg_id = int(args[0])
@@ -164,7 +164,7 @@ async def cmd_setsub(message: types.Message):
             return
         args = _split_args(message.text)
         if len(args) != 2:
-            await message.answer("Использование: /setsub <tg_id> <DD.MM.YYYY>")
+            await message.answer("Использование: /setsub tg_id DD.MM.YYYY\nНапример: /setsub 1146015328 31.12.2025")
             return
         try:
             tg_id = int(args[0])
@@ -198,7 +198,7 @@ async def cmd_adduser(message: types.Message):
             return
         args = _split_args(message.text)
         if len(args) < 4:
-            await message.answer("Использование: /adduser <tg_id> <username> <port> <login>")
+            await message.answer("Использование: /adduser tg_id username port login\nНапример: /adduser 1146015328 Ivan 4100 ivan_worker")
             return
         try:
             tg_id = int(args[0])
