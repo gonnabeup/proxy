@@ -35,6 +35,12 @@ def _is_admin_user(user) -> bool:
     except Exception:
         return False
 
+# Унифицированная проверка текста отмены
+def _is_cancel_text(text: str) -> bool:
+    if not text:
+        return False
+    return text.strip().lower() in {"отмена", "cancel", "отменить", "стоп"}
+
 # Состояния для FSM
 class SetLoginState(StatesGroup):
     waiting_for_login = State()
@@ -54,6 +60,9 @@ class ScheduleState(StatesGroup):
     waiting_for_start_time = State()
     waiting_for_end_time = State()
     waiting_for_confirmation = State()
+
+class TimezoneState(StatesGroup):
+    waiting_for_timezone_input = State()
 
 async def cmd_start(message: types.Message, state: FSMContext = None):
     """Обработчик команды /start"""
@@ -96,6 +105,14 @@ async def cmd_setlogin(message: types.Message, state: FSMContext):
 async def process_login_input(message: types.Message, state: FSMContext, db_session):
     """Обработка ввода нового логина"""
     new_login = message.text.strip()
+
+    # Обработка отмены прямо в обработчике ввода логина
+    if new_login.lower() == "отмена":
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        is_admin = _is_admin_user(user)
+        await message.answer("Действие отменено.", reply_markup=get_main_keyboard(is_admin=is_admin))
+        await state.clear()
+        return
     
     if len(new_login) < 3 or len(new_login) > 50:
         await message.answer("Логин должен содержать от 3 до 50 символов. Попробуйте еще раз:")
@@ -128,42 +145,60 @@ async def cmd_addmode(message: types.Message, state: FSMContext):
 async def process_mode_name(message: types.Message, state: FSMContext):
     """Обработка ввода названия режима"""
     mode_name = message.text.strip()
+    if _is_cancel_text(mode_name):
+        await state.clear()
+        # Возврат основной клавиатуры
+        await message.answer("Действие отменено.")
+        return
     
     # Сохраняем название в состоянии
     await state.update_data(name=mode_name)
     
     # Переходим к следующему шагу
     await state.set_state(AddModeState.waiting_for_host)
-    await message.answer("Введите хост пула (например, 'btc.f2pool.com'):")
+    await message.answer("Введите хост пула (например, 'btc.f2pool.com'):", reply_markup=get_cancel_keyboard())
 
 async def process_mode_host(message: types.Message, state: FSMContext):
     """Обработка ввода хоста пула"""
     mode_host = message.text.strip()
+    if _is_cancel_text(mode_host):
+        await state.clear()
+        await message.answer("Действие отменено.")
+        return
     
     # Сохраняем хост в состоянии
     await state.update_data(host=mode_host)
     
     # Переходим к следующему шагу
     await state.set_state(AddModeState.waiting_for_port)
-    await message.answer("Введите порт пула (например, '3333'):")
+    await message.answer("Введите порт пула (например, '3333'):", reply_markup=get_cancel_keyboard())
 
 async def process_mode_port(message: types.Message, state: FSMContext):
     """Обработка ввода порта пула"""
     try:
-        mode_port = int(message.text.strip())
+        text = message.text.strip()
+        if _is_cancel_text(text):
+            await state.clear()
+            await message.answer("Действие отменено.")
+            return
+        mode_port = int(text)
         
         # Сохраняем порт в состоянии
         await state.update_data(port=mode_port)
         
         # Переходим к следующему шагу
         await state.set_state(AddModeState.waiting_for_alias)
-        await message.answer("Введите алиас для пула (например, 'smagin83'):")
+        await message.answer("Введите алиас для пула (например, 'smagin83'):", reply_markup=get_cancel_keyboard())
     except ValueError:
         await message.answer("Порт должен быть числом. Попробуйте еще раз:")
 
 async def process_mode_alias(message: types.Message, state: FSMContext, db_session):
     """Обработка ввода алиаса для пула"""
     mode_alias = message.text.strip()
+    if _is_cancel_text(mode_alias):
+        await state.clear()
+        await message.answer("Действие отменено.")
+        return
     
     # Получаем все данные из состояния
     data = await state.get_data()
@@ -277,7 +312,13 @@ async def process_mode_callback(callback: types.CallbackQuery, state: FSMContext
 async def process_mode_selection(message: types.Message, state: FSMContext, db_session):
     """Обработка выбора режима"""
     try:
-        mode_id = int(message.text.strip())
+        text = message.text.strip()
+        if _is_cancel_text(text):
+            user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+            is_admin = _is_admin_user(user)
+            await message.answer("Действие отменено.", reply_markup=get_main_keyboard(is_admin=is_admin))
+            return
+        mode_id = int(text)
         
         user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
         mode = db_session.query(Mode).filter(Mode.id == mode_id, Mode.user_id == user.id).first()
@@ -315,7 +356,14 @@ async def cmd_schedule(message: types.Message, state: FSMContext):
 
 async def process_schedule_action(message: types.Message, state: FSMContext, db_session):
     """Обработка выбора действия с расписанием"""
-    action = message.text.strip().lower()
+    action_text = message.text.strip()
+    if _is_cancel_text(action_text):
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        is_admin = _is_admin_user(user)
+        await message.answer("Действие отменено.", reply_markup=get_main_keyboard(is_admin=is_admin))
+        await state.clear()
+        return
+    action = action_text.lower()
     
     if action in ['add', '1', 'добавить']:
         user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
@@ -439,6 +487,10 @@ async def process_schedule_delete_callback(callback: types.CallbackQuery):
 async def process_schedule_start_time(message: types.Message, state: FSMContext):
     """Обработка ввода времени начала расписания"""
     start_time = message.text.strip()
+    if _is_cancel_text(start_time):
+        await state.clear()
+        await message.answer("Действие отменено.")
+        return
     
     # Проверяем формат времени
     try:
@@ -449,13 +501,17 @@ async def process_schedule_start_time(message: types.Message, state: FSMContext)
         
         # Переходим к следующему шагу
         await state.set_state(ScheduleState.waiting_for_end_time)
-        await message.answer("Введите время окончания в формате ЧЧ:ММ (например, 16:30):")
+        await message.answer("Введите время окончания в формате ЧЧ:ММ (например, 16:30):", reply_markup=get_cancel_keyboard())
     except ValueError:
         await message.answer("Неверный формат времени. Используйте формат ЧЧ:ММ (например, 08:30).")
 
 async def process_schedule_end_time(message: types.Message, state: FSMContext):
     """Обработка ввода времени окончания расписания"""
     end_time = message.text.strip()
+    if _is_cancel_text(end_time):
+        await state.clear()
+        await message.answer("Действие отменено.")
+        return
     
     # Проверяем формат времени
     try:
@@ -485,6 +541,12 @@ async def process_schedule_end_time(message: types.Message, state: FSMContext):
 async def process_schedule_confirmation(message: types.Message, state: FSMContext, db_session):
     """Обработка подтверждения создания расписания"""
     answer = message.text.strip().lower()
+    if _is_cancel_text(answer):
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        is_admin = _is_admin_user(user)
+        await message.answer("Действие отменено.", reply_markup=get_main_keyboard(is_admin=is_admin))
+        await state.clear()
+        return
     
     if answer in ['да', 'yes', 'y']:
         # Получаем все данные из состояния
@@ -576,6 +638,78 @@ async def cmd_status(message: types.Message, db_session):
     
     await message.answer(response)
 
+async def cmd_settimezone(message: types.Message, state: FSMContext):
+    """Команда установки часового пояса"""
+    # Предложим популярные варианты через инлайн-клавиатуру
+    from bot.keyboards import get_timezone_keyboard
+    await state.set_state(TimezoneState.waiting_for_timezone_input)
+    await message.answer(
+        "Выберите часовой пояс или введите IANA-идентификатор (например, Europe/Moscow):",
+        reply_markup=get_timezone_keyboard()
+    )
+
+async def process_timezone_callback(callback: types.CallbackQuery, state: FSMContext, db_session):
+    from zoneinfo import ZoneInfo
+    data = callback.data  # set_timezone_<tz>
+    try:
+        tz = data.split("set_timezone_")[-1]
+        if tz == "OTHER":
+            await callback.message.answer("Введите IANA-идентификатор часового пояса (например, Europe/Moscow):")
+            await state.set_state(TimezoneState.waiting_for_timezone_input)
+            await callback.answer()
+            return
+        # Проверим валидность
+        ZoneInfo(tz)
+        user = db_session.query(User).filter(User.tg_id == callback.from_user.id).first()
+        if not user:
+            await callback.message.answer("Вы не зарегистрированы в системе.")
+            await callback.answer()
+            return
+        user.timezone = tz
+        db_session.commit()
+        is_admin = _is_admin_user(user)
+        await callback.message.answer(f"Часовой пояс установлен: {tz}", reply_markup=get_main_keyboard(is_admin=is_admin))
+    except Exception:
+        await callback.message.answer("Неверный часовой пояс. Попробуйте снова.")
+    finally:
+        await callback.answer()
+        await state.clear()
+
+async def process_timezone_input(message: types.Message, state: FSMContext, db_session):
+    from zoneinfo import ZoneInfo
+    text = message.text.strip()
+    if _is_cancel_text(text):
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        is_admin = _is_admin_user(user)
+        await message.answer("Действие отменено.", reply_markup=get_main_keyboard(is_admin=is_admin))
+        await state.clear()
+        return
+    # Быстрые русские алиасы
+    aliases = {
+        "москва": "Europe/Moscow",
+        "питер": "Europe/Moscow",
+        "санкт-петербург": "Europe/Moscow",
+        "новосибирск": "Asia/Novosibirsk",
+        "иркутск": "Asia/Irkutsk",
+        "utc": "UTC",
+    }
+    tz = aliases.get(text.lower(), text)
+    try:
+        ZoneInfo(tz)
+    except Exception:
+        await message.answer("Неверный часовой пояс. Введите корректный IANA идентификатор, например Europe/Moscow.")
+        return
+    user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+    if not user:
+        await message.answer("Вы не зарегистрированы в системе.")
+        await state.clear()
+        return
+    user.timezone = tz
+    db_session.commit()
+    is_admin = _is_admin_user(user)
+    await message.answer(f"Часовой пояс установлен: {tz}", reply_markup=get_main_keyboard(is_admin=is_admin))
+    await state.clear()
+
 async def cmd_help(message: types.Message):
     """Обработчик команды /help"""
     # Создаем сессию БД, чтобы получить порт и логин пользователя
@@ -632,6 +766,8 @@ def register_user_handlers(dp: Dispatcher):
     # Базовые команды
     dp.message.register(cmd_start, Command("start"))
     dp.message.register(cmd_setlogin, Command("setlogin"))
+    dp.message.register(cmd_settimezone, Command("timezone"))
+    dp.message.register(cmd_settimezone, Command("settz"))
     
     # Модифицируем обработчики состояний для работы с БД
     async def process_login_input_wrapper(msg: types.Message, state: FSMContext):
@@ -747,6 +883,25 @@ def register_user_handlers(dp: Dispatcher):
 
     # Callback для удаления расписания
     dp.callback_query.register(process_schedule_delete_callback, F.data.startswith("delete_schedule_"))
+
+    # Обработчики часового пояса
+    async def process_timezone_callback_wrapper(cb: types.CallbackQuery, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_timezone_callback(cb, state, db_session)
+        finally:
+            db_session.close()
+    dp.callback_query.register(process_timezone_callback_wrapper, F.data.startswith("set_timezone_"))
+
+    async def process_timezone_input_wrapper(msg: types.Message, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_timezone_input(msg, state, db_session)
+        finally:
+            db_session.close()
+    dp.message.register(process_timezone_input_wrapper, TimezoneState.waiting_for_timezone_input)
     
     # Статус и помощь
     async def cmd_status_wrapper(msg: types.Message):

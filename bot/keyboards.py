@@ -22,6 +22,7 @@ def get_main_keyboard(is_admin=False):
     builder.row(KeyboardButton(text="/status"), KeyboardButton(text="/modes"))
     builder.row(KeyboardButton(text="/setlogin"), KeyboardButton(text="/setmode"))
     builder.row(KeyboardButton(text="/addmode"), KeyboardButton(text="/schedule"))
+    builder.row(KeyboardButton(text="/timezone"))
     builder.row(KeyboardButton(text="/help"))
     
     # Дополнительные кнопки для администраторов
@@ -41,6 +42,17 @@ def get_modes_keyboard(modes, action="view"):
         button_text = f"{mode.name} ({mode.host}:{mode.port})"
         builder.row(InlineKeyboardButton(text=button_text, callback_data=callback_data))
     
+    return builder.as_markup()
+
+def get_timezone_keyboard():
+    """Инлайн-клавиатура выбора часового пояса"""
+    builder = InlineKeyboardBuilder()
+    # Популярные варианты
+    builder.row(InlineKeyboardButton(text="Москва/Питер", callback_data="set_timezone_Europe/Moscow"))
+    builder.row(InlineKeyboardButton(text="Новосибирск", callback_data="set_timezone_Asia/Novosibirsk"))
+    builder.row(InlineKeyboardButton(text="Иркутск", callback_data="set_timezone_Asia/Irkutsk"))
+    builder.row(InlineKeyboardButton(text="UTC", callback_data="set_timezone_UTC"))
+    builder.row(InlineKeyboardButton(text="Другое", callback_data="set_timezone_OTHER"))
     return builder.as_markup()
 
 def get_schedule_keyboard():

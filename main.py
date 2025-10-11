@@ -12,7 +12,7 @@ from config.settings import (
 from db.models import init_db, get_session
 from proxy.server import StratumProxyServer
 from bot.handlers import register_handlers
-from scheduler import Scheduler
+from bot.scheduler import Scheduler
 
 # Настройка логирования
 logging.basicConfig(

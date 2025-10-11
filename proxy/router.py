@@ -16,6 +16,28 @@ class StratumRouter:
     def __init__(self, db_session: Session):
         self.db_session = db_session
         self.connections = {}  # Словарь для хранения активных соединений
+
+    async def update_active_modes_by_schedule(self):
+        """Обновление активных режимов пользователей согласно их расписаниям.
+        Использует локальное время пользователя через get_scheduled_mode.
+        """
+        try:
+            users = self.db_session.query(User).all()
+            for user in users:
+                scheduled_mode = get_scheduled_mode(self.db_session, user.id)
+                if scheduled_mode:
+                    active_mode = self.db_session.query(Mode).filter(Mode.user_id == user.id, Mode.is_active == 1).first()
+                    if not active_mode or active_mode.id != scheduled_mode.id:
+                        # Деактивируем предыдущие и активируем расписанный режим
+                        self.db_session.query(Mode).filter(Mode.user_id == user.id, Mode.is_active == 1).update({Mode.is_active: 0})
+                        scheduled_mode.is_active = 1
+                        self.db_session.commit()
+                        logger.info(
+                            f"Активирован режим по расписанию для пользователя {user.username} (ID: {user.id}). "
+                            f"Новый режим ID: {scheduled_mode.id}"
+                        )
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении режимов по расписанию: {e}")
     
     async def handle_client(self, reader, writer, client_port):
         """Обработка подключения клиента"""
@@ -70,7 +92,8 @@ class StratumRouter:
                 'client_reader': reader,
                 'client_writer': writer,
                 'pool_reader': pool_reader,
-                'pool_writer': pool_writer
+                'pool_writer': pool_writer,
+                'port': client_port
             }
             
             self.connections[client_addr] = connection_info
@@ -114,7 +137,7 @@ class StratumRouter:
             finally:
                 writer.close()
                 await writer.wait_closed()
-    
+
     async def _proxy_data(self, reader, writer, login, alias, direction):
         """Проксирование данных между клиентом и пулом"""
         try:
@@ -158,3 +181,17 @@ class StratumRouter:
                 logger.error(f"Ошибка при закрытии соединения {client_addr}: {e}")
         
         self.connections.clear()
+
+    def close_connections_by_port(self, port: int):
+        """Закрытие активных соединений только для указанного порта"""
+        to_close = []
+        for client_addr, conn_info in self.connections.items():
+            try:
+                if conn_info.get('port') == port:
+                    conn_info['client_writer'].close()
+                    conn_info['pool_writer'].close()
+                    to_close.append(client_addr)
+            except Exception as e:
+                logger.error(f"Ошибка при закрытии соединения {client_addr} для порта {port}: {e}")
+        for client_addr in to_close:
+            self.connections.pop(client_addr, None)

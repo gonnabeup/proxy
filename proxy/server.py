@@ -31,6 +31,19 @@ class StratumProxyServer:
         self.servers = {}  # Словарь для хранения серверов по портам
         self.running = False
     
+    async def _start_server_for_user(self, user: User):
+        """Запустить сервер для конкретного пользователя"""
+        try:
+            server = await asyncio.start_server(
+                lambda r, w, port=user.port: self.router.handle_client(r, w, port),
+                PROXY_HOST, user.port
+            )
+            self.servers[user.port] = server
+            logger.info(f"Сервер запущен на {PROXY_HOST}:{user.port} для пользователя {user.username}")
+            asyncio.create_task(server.serve_forever())
+        except Exception as e:
+            logger.error(f"Ошибка при запуске сервера на порту {user.port}: {e}")
+
     async def start(self):
         """Запуск прокси-сервера"""
         self.running = True
@@ -44,20 +57,7 @@ class StratumProxyServer:
         
         # Создаем серверы для каждого порта пользователя
         for user in users:
-            try:
-                server = await asyncio.start_server(
-                    lambda r, w, port=user.port: self.router.handle_client(r, w, port),
-                    PROXY_HOST, user.port
-                )
-                
-                self.servers[user.port] = server
-                logger.info(f"Сервер запущен на {PROXY_HOST}:{user.port} для пользователя {user.username}")
-                
-                # Запускаем сервер
-                asyncio.create_task(server.serve_forever())
-                
-            except Exception as e:
-                logger.error(f"Ошибка при запуске сервера на порту {user.port}: {e}")
+            await self._start_server_for_user(user)
         
         # Настраиваем обработчики сигналов для корректного завершения
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -110,6 +110,34 @@ class StratumProxyServer:
         await self.start()
         
         logger.info("Порты перезагружены")
+
+    async def reload_port(self, port: int):
+        """Точечная перезагрузка конкретного порта"""
+        server = self.servers.get(port)
+        if server:
+            try:
+                # Закрываем соединения для порта и остановим сервер
+                self.router.close_connections_by_port(port)
+                server.close()
+                await server.wait_closed()
+                logger.info(f"Сервер на порту {port} остановлен для точечной перезагрузки")
+            except Exception as e:
+                logger.error(f"Ошибка при остановке сервера на порту {port}: {e}")
+            finally:
+                self.servers.pop(port, None)
+        else:
+            logger.info(f"Сервер для порта {port} не найден в списке активных. Будет запущен вновь.")
+
+        # Пересоздаём сервер для соответствующего пользователя
+        try:
+            user = self.db_session.query(User).filter(User.port == port).first()
+            if not user:
+                logger.warning(f"Пользователь для порта {port} не найден")
+                return
+            await self._start_server_for_user(user)
+            logger.info(f"Порт {port} перезагружен")
+        except Exception as e:
+            logger.error(f"Ошибка при запуске сервера на порту {port}: {e}")
 
 async def main():
     """Основная функция для запуска сервера"""

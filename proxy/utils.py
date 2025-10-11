@@ -1,6 +1,7 @@
 import logging
 import json
 import datetime
+from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 import sys
 import os
@@ -22,13 +23,13 @@ def get_active_mode(session: Session, user_id: int) -> Mode:
 
 def get_scheduled_mode(session: Session, user_id: int) -> Mode:
     """Получение режима по расписанию"""
-    now = datetime.datetime.now()
-    current_time = now.strftime("%H:%M")
-    
-    # Получаем пользователя для определения часового пояса
+    # Определяем часовой пояс пользователя
     user = session.query(User).filter(User.id == user_id).first()
     if not user:
         return None
+    tz_name = user.timezone or "Europe/Moscow"
+    now = datetime.datetime.now(ZoneInfo(tz_name))
+    current_time = now.strftime("%H:%M")
     
     # Получаем все расписания пользователя
     schedules = session.query(Schedule).filter(Schedule.user_id == user_id).all()
@@ -43,11 +44,18 @@ def get_scheduled_mode(session: Session, user_id: int) -> Mode:
 
 def is_time_in_range(current_time, start_time, end_time):
     """Проверка, находится ли текущее время в диапазоне"""
-    # Преобразуем строки времени в объекты datetime.time
-    def parse_time(time_str):
-        hours, minutes = map(int, time_str.split(':'))
+    # Универсальный парсер: принимает строки "HH:MM" или datetime.time
+    def parse_time(t):
+        if isinstance(t, datetime.time):
+            return t
+        if isinstance(t, str):
+            hours, minutes = map(int, t.split(':'))
+            return datetime.time(hours, minutes)
+        # Попытка привести к строке
+        ts = str(t)
+        hours, minutes = map(int, ts.split(':'))
         return datetime.time(hours, minutes)
-    
+
     current = parse_time(current_time)
     start = parse_time(start_time)
     end = parse_time(end_time)
