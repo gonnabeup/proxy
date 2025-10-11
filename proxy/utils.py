@@ -69,24 +69,43 @@ def is_time_in_range(current_time, start_time, end_time):
 def modify_stratum_login(data, new_login):
     """Модифицирует JSON-данные Stratum-протокола, заменяя логин"""
     try:
-        # Удаляем возможный BOM в начале строки, чтобы избежать ошибок парсинга
+        # Удаляем возможный BOM и приводим к строке
         if isinstance(data, bytes):
-            # Если пришли байты — декодируем с utf-8-sig, который срежет BOM
             text = data.decode('utf-8-sig', errors='ignore')
         else:
-            text = data
+            text = data or ""
             if text.startswith('\ufeff'):
                 text = text.lstrip('\ufeff')
 
-        # Парсим JSON
+        # Некоторые клиенты отправляют несколько JSON-объектов одним буфером.
+        # Разберём последовательность объектов с помощью raw_decode и модифицируем только authorize/submit.
+        decoder = json.JSONDecoder()
+        idx = 0
+        length = len(text)
+        objects = []
+        while idx < length:
+            # Пропускаем пробелы и переводы строк
+            while idx < length and text[idx].isspace():
+                idx += 1
+            if idx >= length:
+                break
+            obj, next_idx = decoder.raw_decode(text, idx)
+            if isinstance(obj, dict) and obj.get('method') in ("mining.authorize", "mining.submit"):
+                params = obj.get('params')
+                if isinstance(params, list) and params:
+                    obj['params'][0] = new_login
+            objects.append(obj)
+            idx = next_idx
+
+        # Если что-то распарсили, вернём обратно как NDJSON (по одному объекту на строку)
+        if objects:
+            return "\n".join(json.dumps(o) for o in objects)
+        # Если не получилось распарсить как последовательность, попробуем обычный случай
         json_data = json.loads(text)
-        
-        # Проверяем, есть ли поле params
-        if 'params' in json_data and isinstance(json_data['params'], list) and len(json_data['params']) > 0:
-            # Заменяем первый параметр (логин)
-            json_data['params'][0] = new_login
-            
-        # Преобразуем обратно в строку
+        if isinstance(json_data, dict) and json_data.get('method') in ("mining.authorize", "mining.submit"):
+            params = json_data.get('params')
+            if isinstance(params, list) and params:
+                json_data['params'][0] = new_login
         return json.dumps(json_data)
     except Exception as e:
         logger.error(f"Ошибка при модификации логина: {e}")
