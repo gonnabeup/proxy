@@ -69,8 +69,17 @@ def is_time_in_range(current_time, start_time, end_time):
 def modify_stratum_login(data, new_login):
     """Модифицирует JSON-данные Stratum-протокола, заменяя логин"""
     try:
+        # Удаляем возможный BOM в начале строки, чтобы избежать ошибок парсинга
+        if isinstance(data, bytes):
+            # Если пришли байты — декодируем с utf-8-sig, который срежет BOM
+            text = data.decode('utf-8-sig', errors='ignore')
+        else:
+            text = data
+            if text.startswith('\ufeff'):
+                text = text.lstrip('\ufeff')
+
         # Парсим JSON
-        json_data = json.loads(data)
+        json_data = json.loads(text)
         
         # Проверяем, есть ли поле params
         if 'params' in json_data and isinstance(json_data['params'], list) and len(json_data['params']) > 0:
@@ -81,4 +90,10 @@ def modify_stratum_login(data, new_login):
         return json.dumps(json_data)
     except Exception as e:
         logger.error(f"Ошибка при модификации логина: {e}")
-        return data  # Возвращаем исходные данные в случае ошибки
+        # Возвращаем исходные данные в случае ошибки, предварительно удалив BOM если он есть
+        try:
+            if isinstance(data, bytes):
+                return data.decode('utf-8', errors='ignore')
+            return data.lstrip('\ufeff') if isinstance(data, str) else data
+        except Exception:
+            return data
