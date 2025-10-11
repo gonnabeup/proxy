@@ -54,8 +54,8 @@ async def main():
     )
     
     try:
-        # Регистрация обработчиков команд
-        register_handlers(dp)
+        # Регистрация обработчиков команд (передаем proxy_server для точечных перезагрузок)
+        register_handlers(dp, proxy_server=proxy_server)
         
         # Запуск прокси-сервера
         await proxy_server.start()

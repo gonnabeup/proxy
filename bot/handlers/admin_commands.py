@@ -7,6 +7,13 @@ from db.models import User, Mode, Schedule
 
 logger = logging.getLogger(__name__)
 
+# Глобальная ссылка на прокси-сервер для точечных перезагрузок портов
+_proxy_server = None
+
+def _set_proxy_server(server):
+    global _proxy_server
+    _proxy_server = server
+
 async def cmd_admin_help(message: types.Message):
     """Обработчик команды /admin_help"""
     help_text = (
@@ -146,8 +153,19 @@ async def cmd_setport(message: types.Message):
         user.port = new_port
         db_session.commit()
         await message.answer(f"Порт пользователя {user.username or tg_id} изменён: {old_port} → {new_port}.")
-        # Примечание: перезагрузка конкретного порта выполняется планировщиком/сервером;
-        # при необходимости можно инициировать reload_port здесь, если объект сервера доступен.
+        # Если доступен прокси-сервер, выполняем точечные перезагрузки старого и нового портов
+        try:
+            if _proxy_server:
+                # Останавливаем и очищаем старый порт (если был запущен)
+                await _proxy_server.reload_port(old_port)
+                # Запускаем новый порт
+                await _proxy_server.reload_port(new_port)
+                await message.answer(f"Прокси перезагружен для портов {old_port} и {new_port}.")
+            else:
+                await message.answer("Предупреждение: объект прокси-сервера недоступен для перезагрузки. Перезапустите сервис.")
+        except Exception as e:
+            logger.error(f"Ошибка перезагрузки портов {old_port}/{new_port}: {e}")
+            await message.answer("Ошибка перезагрузки портов. Проверьте логи сервера.")
     finally:
         db_session.close()
 
@@ -227,6 +245,16 @@ async def cmd_adduser(message: types.Message):
         db_session.add(user)
         db_session.commit()
         await message.answer(f"Пользователь добавлен: {username} (tg_id={tg_id}), порт {port}, логин {login}.")
+        # Сразу перезагрузим порт для нового пользователя, если доступен объект сервера
+        try:
+            if _proxy_server:
+                await _proxy_server.reload_port(port)
+                await message.answer(f"Порт {port} перезагружен для нового пользователя.")
+            else:
+                await message.answer("Предупреждение: объект прокси-сервера недоступен для перезагрузки. Перезапустите сервис.")
+        except Exception as e:
+            logger.error(f"Ошибка перезагрузки порта {port} после добавления пользователя: {e}")
+            await message.answer("Ошибка перезагрузки порта. Проверьте логи сервера.")
     finally:
         db_session.close()
 
@@ -242,3 +270,55 @@ def register_admin_handlers(dp: Dispatcher):
     dp.message.register(cmd_setport, Command("setport"))
     dp.message.register(cmd_freerange, Command("freerange"))
     dp.message.register(cmd_listusers, Command("listusers"))
+
+async def cmd_reloadport(message: types.Message):
+    """Точечная перезагрузка порта: /reloadport <port>"""
+    from db.models import init_db, get_session, User, UserRole
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        admin = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        if not admin or admin.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+            await message.answer("У вас нет прав для выполнения этой команды.")
+            return
+
+        args = _split_args(message.text)
+        if len(args) != 1:
+            await message.answer("Использование: /reloadport port\nНапример: /reloadport 4202")
+            return
+        try:
+            port = int(args[0])
+        except ValueError:
+            await message.answer("Порт должен быть числом.")
+            return
+
+        if not _proxy_server:
+            await message.answer("Объект прокси-сервера недоступен. Перезапустите сервис.")
+            return
+        try:
+            await _proxy_server.reload_port(port)
+            await message.answer(f"Порт {port} перезагружен.")
+        except Exception as e:
+            logger.error(f"Ошибка перезагрузки порта {port}: {e}")
+            await message.answer("Ошибка перезагрузки порта. Проверьте логи сервера.")
+    finally:
+        db_session.close()
+
+def register_admin_handlers(dp: Dispatcher, proxy_server=None):
+    """Регистрация обработчиков административных команд, с возможной передачей proxy_server"""
+    # Устанавливаем ссылку на прокси-сервер
+    if proxy_server:
+        _set_proxy_server(proxy_server)
+
+    # существующие команды
+    dp.message.register(cmd_admin_help, Command("admin_help"))
+    dp.message.register(cmd_users, Command("users"))
+    dp.message.register(cmd_stats, Command("stats"))
+    # новые команды и алиасы, соответствующие клавиатуре/README
+    dp.message.register(cmd_adduser, Command("adduser"))
+    dp.message.register(cmd_setsub, Command("setsub"))
+    dp.message.register(cmd_setport, Command("setport"))
+    dp.message.register(cmd_freerange, Command("freerange"))
+    dp.message.register(cmd_listusers, Command("listusers"))
+    # Точечная перезагрузка порта
+    dp.message.register(cmd_reloadport, Command("reloadport"))
