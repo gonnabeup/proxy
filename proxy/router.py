@@ -67,7 +67,7 @@ class StratumRouter:
         
         # Определяем активный режим (по расписанию или вручную установленный)
         mode = get_scheduled_mode(self.db_session, user.id) or get_active_mode(self.db_session, user.id)
-        
+
         if not mode:
             logger.warning(f"Активный режим для пользователя {user.username} (ID: {user.id}) не найден")
             try:
@@ -75,6 +75,19 @@ class StratumRouter:
                 await writer.drain()
             except Exception as e:
                 logger.error(f"Ошибка при отправке сообщения: {e}")
+            finally:
+                writer.close()
+                await writer.wait_closed()
+            return
+
+        # Если активен режим Sleep — не подключаемся к пулу, а закрываем соединение
+        if (mode.name or '').lower() == 'sleep' or (mode.host or '').lower() == 'sleep':
+            logger.info(f"Подключение на порт {client_port} для пользователя {user.username} отклонено: активен режим Sleep")
+            try:
+                writer.write(f"Порт в режиме сна. Активируйте рабочий режим через /setmode.\n")
+                await writer.drain()
+            except Exception as e:
+                logger.error(f"Ошибка при отправке сообщения о режиме сна: {e}")
             finally:
                 writer.close()
                 await writer.wait_closed()

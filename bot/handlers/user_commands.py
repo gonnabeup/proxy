@@ -724,7 +724,7 @@ async def cmd_help(message: types.Message):
             "/help - Показать эту справку\n\n"
         )
         if user:
-            connection_line = f"Строка подключения: 12v5a.tplinkdns.com:{user.port}, логин: {user.login}, пароль: x"
+            connection_line = f"Строка подключения: 12v5a.tplinkdns.com:{user.port}, воркер: {user.login}.номер, пароль: x"
             await message.answer(commands_block + connection_line)
         else:
             await message.answer(commands_block + "Вы не зарегистрированы в системе. Обратитесь к администратору.")

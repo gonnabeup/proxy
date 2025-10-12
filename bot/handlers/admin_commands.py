@@ -206,6 +206,7 @@ async def cmd_adduser(message: types.Message):
     """Добавить пользователя: /adduser <tg_id> <username> <port> <login>"""
     import datetime
     from db.models import init_db, get_session, User, UserRole
+    from db.models import Mode
     from config.settings import DEFAULT_PORT_RANGE
     engine = init_db()
     db_session = get_session(engine)
@@ -243,8 +244,21 @@ async def cmd_adduser(message: types.Message):
             subscription_until=datetime.datetime.now() + datetime.timedelta(days=30)
         )
         db_session.add(user)
+        # Получим user.id без полного коммита
+        db_session.flush()
+
+        # Добавляем режим Sleep по умолчанию и делаем его активным
+        sleep_mode = Mode(
+            user_id=user.id,
+            name='Sleep',
+            host='sleep',
+            port=0,
+            alias='sleep',
+            is_active=1
+        )
+        db_session.add(sleep_mode)
         db_session.commit()
-        await message.answer(f"Пользователь добавлен: {username} (tg_id={tg_id}), порт {port}, логин {login}.")
+        await message.answer(f"Пользователь добавлен: {username} (tg_id={tg_id}), порт {port}, логин {login}. По умолчанию активен режим Sleep.")
         # Сразу перезагрузим порт для нового пользователя, если доступен объект сервера
         try:
             if _proxy_server:
