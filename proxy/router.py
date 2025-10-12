@@ -56,7 +56,7 @@ class StratumRouter:
         if not user.is_subscription_active():
             logger.warning(f"Подписка пользователя {user.username} (ID: {user.id}) истекла")
             try:
-                writer.write(f"Подписка истекла. Обратитесь к администратору.\n")
+                writer.write("Подписка истекла. Обратитесь к администратору.\n".encode("utf-8"))
                 await writer.drain()
             except Exception as e:
                 logger.error(f"Ошибка при отправке сообщения: {e}")
@@ -71,7 +71,7 @@ class StratumRouter:
         if not mode:
             logger.warning(f"Активный режим для пользователя {user.username} (ID: {user.id}) не найден")
             try:
-                writer.write(f"Режим не настроен. Установите режим через Telegram-бот.\n")
+                writer.write("Режим не настроен. Установите режим через Telegram-бот.\n".encode("utf-8"))
                 await writer.drain()
             except Exception as e:
                 logger.error(f"Ошибка при отправке сообщения: {e}")
@@ -84,7 +84,7 @@ class StratumRouter:
         if (mode.name or '').lower() == 'sleep' or (mode.host or '').lower() == 'sleep':
             logger.info(f"Подключение на порт {client_port} для пользователя {user.username} отклонено: активен режим Sleep")
             try:
-                writer.write(f"Порт в режиме сна. Активируйте рабочий режим через /setmode.\n")
+                writer.write("Порт в режиме сна. Активируйте рабочий режим через /setmode.\n".encode("utf-8"))
                 await writer.drain()
             except Exception as e:
                 logger.error(f"Ошибка при отправке сообщения о режиме сна: {e}")
