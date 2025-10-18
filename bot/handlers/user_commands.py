@@ -725,6 +725,8 @@ async def cmd_help(message: types.Message):
             "/setmode - Выбрать активный режим\n"
             "/schedule - Управление расписанием\n"
             "/status - Показать текущий статус\n"
+            "/timezone - Установить часовой пояс\n"
+            "/pay - Оплатить подписку\n"
             "/help - Показать эту справку\n\n"
         )
         if user:
