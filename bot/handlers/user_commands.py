@@ -1036,6 +1036,12 @@ def register_user_handlers(dp: Dispatcher):
 
     # Оплата
     dp.message.register(cmd_pay, Command("pay"))
+    # Callback из напоминаний: открыть выбор способа оплаты
+    dp.callback_query.register(process_pay_open, F.data == "pay_open")
+    # Callback кнопок метода оплаты
+    dp.callback_query.register(process_pay_method, F.data == "pay_bep20")
+    dp.callback_query.register(process_pay_method, F.data == "pay_trc20")
+    dp.callback_query.register(process_pay_method, F.data == "pay_card")
 
     async def process_payment_screenshot_wrapper(msg: types.Message, state: FSMContext):
         engine = init_db()
