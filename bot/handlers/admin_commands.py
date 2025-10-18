@@ -301,7 +301,7 @@ async def cmd_payments(message: types.Message):
                 f"Создано: {pr.created_at.strftime('%d.%m.%Y %H:%M')}\n"
             )
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Смотреть скрин", callback_data=f"pay_view_{pr.id}")],
+                [InlineKeyboardButton(text="Смотреть файл/скрин", callback_data=f"pay_view_{pr.id}")],
                 [InlineKeyboardButton(text="Одобрить", callback_data=f"pay_approve_{pr.id}"), InlineKeyboardButton(text="Отклонить", callback_data=f"pay_reject_{pr.id}")],
             ])
             await message.answer(info, reply_markup=kb)
@@ -319,10 +319,14 @@ async def process_pay_view(callback: types.CallbackQuery):
             await callback.message.answer("Заявка не найдена.")
             await callback.answer()
             return
-        # Показать фото оплаты
-        await callback.message.answer_photo(photo=pr.file_id, caption=f"Заявка #{pr.id} от пользователя {pr.user_id}")
-    except Exception:
-        await callback.message.answer("Не удалось показать скрин.")
+        caption = f"Заявка #{pr.id} от пользователя {pr.user_id}"
+        try:
+            await callback.message.answer_photo(photo=pr.file_id, caption=caption)
+        except Exception:
+            try:
+                await callback.message.answer_document(document=pr.file_id, caption=caption)
+            except Exception:
+                await callback.message.answer("Не удалось показать файл/скрин. Возможно, файл удалён или недоступен.")
     finally:
         await callback.answer()
         db_session.close()

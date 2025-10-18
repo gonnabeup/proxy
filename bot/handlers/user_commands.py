@@ -802,19 +802,19 @@ async def process_pay_method(callback: types.CallbackQuery, state: FSMContext):
         method = "bep20"
         caption = (
             f"USDT BEP-20\nАдрес: {settings['bep20_addr']}\n\n"
-            "Отправьте скриншот оплаты одним фото."
+            "Отправьте скриншот оплаты фото или файл (например, PDF)."
         )
     elif data == "pay_trc20":
         method = "trc20"
         caption = (
             f"USDT TRC-20\nАдрес: {settings['trc20_addr']}\n\n"
-            "Отправьте скриншот оплаты одним фото."
+            "Отправьте скриншот оплаты фото или файл (например, PDF)."
         )
     elif data == "pay_card":
         method = "card"
         caption = (
             f"Перевод по карте\nНомер: {settings['card_number']}\n\n"
-            "Отправьте скриншот оплаты одним фото."
+            "Отправьте скриншот оплаты фото или файл (например, PDF)."
         )
 
     if not method:
@@ -824,13 +824,13 @@ async def process_pay_method(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(PaymentState.waiting_for_screenshot)
     await state.update_data(payment_method=method)
 
-    # По QR кодам отмена: отправляем только реквизиты текстом
+    # Инструкция и реквизиты
     await callback.message.answer(caption)
 
     await callback.answer()
 
 async def process_payment_screenshot(message: types.Message, state: FSMContext, db_session):
-    # Ожидаем фото оплаты
+    # Ожидаем фото или документ оплаты
     user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
     is_admin = _is_admin_user(user)
 
@@ -840,8 +840,15 @@ async def process_payment_screenshot(message: types.Message, state: FSMContext, 
         await state.clear()
         return
 
-    if not message.photo:
-        await message.answer("Пожалуйста, отправьте скриншот оплаты одним фото или нажмите Отмена.")
+    # Получаем file_id из фото или документа
+    file_id = None
+    if message.photo:
+        file_id = message.photo[-1].file_id
+    elif message.document:
+        file_id = message.document.file_id
+
+    if not file_id:
+        await message.answer("Пожалуйста, отправьте скриншот или файл с чеком.")
         return
 
     data = await state.get_data()
@@ -853,7 +860,6 @@ async def process_payment_screenshot(message: types.Message, state: FSMContext, 
 
     try:
         from db.models import PaymentRequest, PaymentMethod, PaymentStatus
-        file_id = message.photo[-1].file_id
         pr = PaymentRequest(
             user_id=user.id,
             method=PaymentMethod(method),
@@ -1038,13 +1044,9 @@ def register_user_handlers(dp: Dispatcher):
             await process_payment_screenshot(msg, state, db_session)
         finally:
             db_session.close()
+    # принимаем фото и документы в состоянии ожидания скрина/чека
     dp.message.register(process_payment_screenshot_wrapper, PaymentState.waiting_for_screenshot, F.photo)
-
-    # Колбэки оплаты
-    dp.callback_query.register(process_pay_open, F.data == "pay_open")
-    async def process_pay_method_wrapper(cb: types.CallbackQuery, state: FSMContext):
-        await process_pay_method(cb, state)
-    dp.callback_query.register(process_pay_method_wrapper, F.data.in_({"pay_bep20", "pay_trc20", "pay_card"}))
+    dp.message.register(process_payment_screenshot_wrapper, PaymentState.waiting_for_screenshot, F.document)
 
     # Отмена
     dp.message.register(lambda msg: cmd_cancel(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id)), Command("cancel"))
