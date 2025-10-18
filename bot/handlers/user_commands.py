@@ -777,7 +777,12 @@ def _payment_settings():
             "card_number": "",
         }
 
-async def cmd_pay(message: types.Message):
+async def cmd_pay(message: types.Message, state: FSMContext):
+    # Если уже в процессе оплаты, запрещаем повторный выбор
+    current_state = await state.get_state()
+    if current_state == PaymentState.waiting_for_screenshot.state:
+        await message.answer("Вы уже выбрали способ оплаты. Отправьте фото/файл или нажмите «Отмена».")
+        return
     text = (
         "Выберите способ оплаты подписки:\n\n"
         "— USDT BEP-20\n"
@@ -794,6 +799,17 @@ async def process_pay_open(callback: types.CallbackQuery):
 
 async def process_pay_method(callback: types.CallbackQuery, state: FSMContext):
     data = callback.data
+    
+    # Если уже выбран способ, игнорируем повторные нажатия
+    current_state = await state.get_state()
+    if current_state == PaymentState.waiting_for_screenshot.state:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await callback.answer("Способ оплаты уже выбран. Отправьте фото/файл или нажмите «Отмена».")
+        return
+
     settings = _payment_settings()
     method = None
     caption = None
@@ -802,32 +818,60 @@ async def process_pay_method(callback: types.CallbackQuery, state: FSMContext):
         method = "bep20"
         caption = (
             f"USDT BEP-20\nАдрес: {settings['bep20_addr']}\n\n"
-            "Отправьте скриншот оплаты фото или файл (например, PDF)."
+            "Отправьте скриншот оплаты фото или файл (например, PDF).\n"
+            "Для отмены нажмите кнопку «Отмена» ниже."
         )
     elif data == "pay_trc20":
         method = "trc20"
         caption = (
             f"USDT TRC-20\nАдрес: {settings['trc20_addr']}\n\n"
-            "Отправьте скриншот оплаты фото или файл (например, PDF)."
+            "Отправьте скриншот оплаты фото или файл (например, PDF).\n"
+            "Для отмены нажмите кнопку «Отмена» ниже."
         )
     elif data == "pay_card":
         method = "card"
         caption = (
             f"Перевод по карте\nНомер: {settings['card_number']}\n\n"
-            "Отправьте скриншот оплаты фото или файл (например, PDF)."
+            "Отправьте скриншот оплаты фото или файл (например, PDF).\n"
+            "Для отмены нажмите кнопку «Отмена» ниже."
         )
 
     if not method:
         await callback.answer()
         return
 
+    # Убираем клавиатуру выбора способа, чтобы не было повторных нажатий
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
     await state.set_state(PaymentState.waiting_for_screenshot)
     await state.update_data(payment_method=method)
 
-    # Инструкция и реквизиты
-    await callback.message.answer(caption)
-
+    # Инструкция и реквизиты + кнопка отмены
+    from bot.keyboards import get_cancel_inline_keyboard
+    await callback.message.answer(caption, reply_markup=get_cancel_inline_keyboard())
+ 
     await callback.answer()
+ 
+async def process_pay_cancel(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    # Попробуем убрать инлайн-клавиатуру, если осталась
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    # Вернем пользователя на основную клавиатуру
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        user = db_session.query(User).filter(User.tg_id == callback.from_user.id).first()
+        is_admin = _is_admin_user(user)
+        await callback.message.answer("Оплата отменена.", reply_markup=get_main_keyboard(is_admin=is_admin))
+    finally:
+        db_session.close()
+    await callback.answer("Действие отменено")
 
 async def process_payment_screenshot(message: types.Message, state: FSMContext, db_session):
     # Ожидаем фото или документ оплаты
@@ -1042,6 +1086,8 @@ def register_user_handlers(dp: Dispatcher):
     dp.callback_query.register(process_pay_method, F.data == "pay_bep20")
     dp.callback_query.register(process_pay_method, F.data == "pay_trc20")
     dp.callback_query.register(process_pay_method, F.data == "pay_card")
+    # Кнопка инлайн-отмены
+    dp.callback_query.register(process_pay_cancel, F.data == "pay_cancel")
 
     async def process_payment_screenshot_wrapper(msg: types.Message, state: FSMContext):
         engine = init_db()

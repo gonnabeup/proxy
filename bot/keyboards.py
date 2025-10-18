@@ -101,3 +101,9 @@ def get_pay_methods_keyboard():
     builder.row(InlineKeyboardButton(text="USDT TRC-20", callback_data="pay_trc20"))
     builder.row(InlineKeyboardButton(text="Перевод по карте", callback_data="pay_card"))
     return builder.as_markup()
+
+def get_cancel_inline_keyboard():
+    """Инлайн-клавиатура с кнопкой отмены для процессов (например, оплаты)"""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="Отмена", callback_data="pay_cancel"))
+    return builder.as_markup()
