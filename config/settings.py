@@ -6,7 +6,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://simple1:simple1@localhost/proxy_bot')
 
 # Настройки Telegram-бота
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')  # Токен Telegram-бота
+# Токен Telegram-бота
+# Поддерживаем две переменные окружения для совместимости:
+# - BOT_TOKEN (приоритетно)
+# - TELEGRAM_TOKEN (фолбэк)
+BOT_TOKEN = os.getenv('BOT_TOKEN', os.getenv('TELEGRAM_TOKEN', ''))
+TELEGRAM_TOKEN = BOT_TOKEN  # сохранение совместимости со старым именем
 
 # Настройки прокси
 DEFAULT_PORT_RANGE = (4000, 4200)  # Диапазон портов для пользователей
@@ -20,3 +25,8 @@ LOG_LEVEL = 'INFO'
 # Создание директории для логов, если она не существует
 if not LOG_DIR.exists():
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+# Настройки оплаты
+WALLET_BEP20_ADDRESS = os.getenv('WALLET_BEP20_ADDRESS', '')
+WALLET_TRC20_ADDRESS = os.getenv('WALLET_TRC20_ADDRESS', '')
+CARD_NUMBER = os.getenv('CARD_NUMBER', '')

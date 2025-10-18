@@ -1,5 +1,5 @@
 import logging
-from aiogram import Dispatcher, types
+from aiogram import Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
@@ -20,7 +20,9 @@ async def cmd_admin_help(message: types.Message):
         "Административные команды:\n\n"
         "/admin_help - Показать эту справку\n"
         "/users - Показать список пользователей\n"
-        "/stats - Показать статистику системы"
+        "/stats - Показать статистику системы\n"
+        "/payments - Заявки на оплату\n"
+        "/extendsub - Продлить подписку пользователю на 1 месяц"
     )
     await message.answer(help_text)
 
@@ -272,6 +274,156 @@ async def cmd_adduser(message: types.Message):
     finally:
         db_session.close()
 
+async def cmd_payments(message: types.Message):
+    """Показать заявки на оплату со статусом PENDING"""
+    from db.models import init_db, get_session, User, UserRole, PaymentRequest, PaymentStatus
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        admin = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        if not admin or admin.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+            await message.answer("У вас нет прав для выполнения этой команды.")
+            return
+
+        requests = db_session.query(PaymentRequest).filter(PaymentRequest.status == PaymentStatus.PENDING).order_by(PaymentRequest.created_at.asc()).all()
+        if not requests:
+            await message.answer("Нет заявок на оплату.")
+            return
+
+        await message.answer(f"Найдено заявок: {len(requests)}")
+        for pr in requests:
+            user = db_session.query(User).filter(User.id == pr.user_id).first()
+            info = (
+                f"Заявка #{pr.id}\n"
+                f"Пользователь: {user.username or user.tg_id} (tg_id={user.tg_id})\n"
+                f"Метод: {pr.method.value}\n"
+                f"Создано: {pr.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+            )
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Смотреть скрин", callback_data=f"pay_view_{pr.id}")],
+                [InlineKeyboardButton(text="Одобрить", callback_data=f"pay_approve_{pr.id}"), InlineKeyboardButton(text="Отклонить", callback_data=f"pay_reject_{pr.id}")],
+            ])
+            await message.answer(info, reply_markup=kb)
+    finally:
+        db_session.close()
+
+async def process_pay_view(callback: types.CallbackQuery):
+    from db.models import init_db, get_session, PaymentRequest
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        req_id = int(callback.data.split("_")[-1])
+        pr = db_session.query(PaymentRequest).filter(PaymentRequest.id == req_id).first()
+        if not pr:
+            await callback.message.answer("Заявка не найдена.")
+            await callback.answer()
+            return
+        # Показать фото оплаты
+        await callback.message.answer_photo(photo=pr.file_id, caption=f"Заявка #{pr.id} от пользователя {pr.user_id}")
+    except Exception:
+        await callback.message.answer("Не удалось показать скрин.")
+    finally:
+        await callback.answer()
+        db_session.close()
+
+async def process_pay_approve(callback: types.CallbackQuery):
+    from db.models import init_db, get_session, PaymentRequest, PaymentStatus, User
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        req_id = int(callback.data.split("_")[-1])
+        pr = db_session.query(PaymentRequest).filter(PaymentRequest.id == req_id).first()
+        if not pr:
+            await callback.message.answer("Заявка не найдена.")
+            await callback.answer()
+            return
+        pr.status = PaymentStatus.APPROVED
+        db_session.commit()
+        await callback.message.answer(f"Заявка #{req_id} подтверждена.")
+        try:
+            user = db_session.query(User).filter(User.id == pr.user_id).first()
+            if user:
+                await callback.bot.send_message(chat_id=user.tg_id, text="✅ Ваша оплата подтверждена. Администратор продлит подписку в ближайшее время.")
+        except Exception:
+            pass
+    except Exception:
+        await callback.message.answer("Ошибка подтверждения заявки.")
+    finally:
+        await callback.answer()
+        db_session.close()
+
+async def process_pay_reject(callback: types.CallbackQuery):
+    from db.models import init_db, get_session, PaymentRequest, PaymentStatus, User
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        req_id = int(callback.data.split("_")[-1])
+        pr = db_session.query(PaymentRequest).filter(PaymentRequest.id == req_id).first()
+        if not pr:
+            await callback.message.answer("Заявка не найдена.")
+            await callback.answer()
+            return
+        pr.status = PaymentStatus.REJECTED
+        db_session.commit()
+        await callback.message.answer(f"Заявка #{req_id} отклонена.")
+        try:
+            user = db_session.query(User).filter(User.id == pr.user_id).first()
+            if user:
+                await callback.bot.send_message(chat_id=user.tg_id, text="❌ Оплата отклонена. Проверьте реквизиты и попробуйте снова через /pay.")
+        except Exception:
+            pass
+    except Exception:
+        await callback.message.answer("Ошибка отклонения заявки.")
+    finally:
+        await callback.answer()
+        db_session.close()
+
+async def cmd_extendsub(message: types.Message):
+    """Продлить подписку пользователю на N месяцев: /extendsub <tg_id> [months]"""
+    import datetime, calendar
+    from db.models import init_db, get_session, User, UserRole
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        admin = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        if not admin or admin.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+            await message.answer("У вас нет прав для выполнения этой команды.")
+            return
+
+        args = _split_args(message.text)
+        if len(args) < 1:
+            await message.answer("Использование: /extendsub tg_id [months]\nНапример: /extendsub 1146015328 1")
+            return
+        try:
+            tg_id = int(args[0])
+            months = int(args[1]) if len(args) >= 2 else 1
+        except ValueError:
+            await message.answer("tg_id и months должны быть числами.")
+            return
+
+        user = db_session.query(User).filter(User.tg_id == tg_id).first()
+        if not user:
+            await message.answer("Пользователь с таким tg_id не найден.")
+            return
+
+        base = max(user.subscription_until, datetime.datetime.now())
+        y = base.year
+        m = base.month + months
+        # нормализация года/месяца
+        y += (m - 1) // 12
+        m = ((m - 1) % 12) + 1
+        d = min(base.day, calendar.monthrange(y, m)[1])
+        new_until = base.replace(year=y, month=m, day=d)
+        # выставим конец дня
+        new_until = new_until.replace(hour=23, minute=59, second=59, microsecond=0)
+
+        user.subscription_until = new_until
+        db_session.commit()
+        await message.answer(f"Подписка пользователя {user.username or tg_id} продлена до {new_until.strftime('%d.%m.%Y')}.")
+    finally:
+        db_session.close()
+
 def register_admin_handlers(dp: Dispatcher):
     """Регистрация обработчиков административных команд"""
     # существующие команды
@@ -284,6 +436,8 @@ def register_admin_handlers(dp: Dispatcher):
     dp.message.register(cmd_setport, Command("setport"))
     dp.message.register(cmd_freerange, Command("freerange"))
     dp.message.register(cmd_listusers, Command("listusers"))
+    dp.message.register(cmd_payments, Command("payments"))
+    dp.message.register(cmd_extendsub, Command("extendsub"))
 
 async def cmd_reloadport(message: types.Message):
     """Точечная перезагрузка порта: /reloadport <port>"""
@@ -336,3 +490,10 @@ def register_admin_handlers(dp: Dispatcher, proxy_server=None):
     dp.message.register(cmd_listusers, Command("listusers"))
     # Точечная перезагрузка порта
     dp.message.register(cmd_reloadport, Command("reloadport"))
+    # Заявки на оплату и продление
+    dp.message.register(cmd_payments, Command("payments"))
+    dp.message.register(cmd_extendsub, Command("extendsub"))
+    # Колбэки заявок
+    dp.callback_query.register(process_pay_view, F.data.startswith("pay_view_"))
+    dp.callback_query.register(process_pay_approve, F.data.startswith("pay_approve_"))
+    dp.callback_query.register(process_pay_reject, F.data.startswith("pay_reject_"))

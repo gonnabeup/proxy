@@ -22,14 +22,15 @@ def get_main_keyboard(is_admin=False):
     builder.row(KeyboardButton(text="/status"), KeyboardButton(text="/modes"))
     builder.row(KeyboardButton(text="/setlogin"), KeyboardButton(text="/setmode"))
     builder.row(KeyboardButton(text="/addmode"), KeyboardButton(text="/schedule"))
-    builder.row(KeyboardButton(text="/timezone"))
+    builder.row(KeyboardButton(text="/timezone"), KeyboardButton(text="/pay"))
     builder.row(KeyboardButton(text="/help"))
     
     # Дополнительные кнопки для администраторов
     if is_admin:
         builder.row(KeyboardButton(text="/adduser"), KeyboardButton(text="/listusers"))
         builder.row(KeyboardButton(text="/setsub"), KeyboardButton(text="/setport"))
-        builder.row(KeyboardButton(text="/freerange"))
+        builder.row(KeyboardButton(text="/freerange"), KeyboardButton(text="/payments"))
+        builder.row(KeyboardButton(text="/extendsub"))
     
     return builder.as_markup(resize_keyboard=True, one_time_keyboard=False)
 
@@ -91,4 +92,12 @@ def get_pool_link_keyboard(url: str = "https://btc.f2pool.com"):
         InlineKeyboardButton(text="2", url=url),
         InlineKeyboardButton(text="3", url=url),
     )
+    return builder.as_markup()
+
+def get_pay_methods_keyboard():
+    """Инлайн-клавиатура выбора способа оплаты"""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="USDT BEP-20", callback_data="pay_bep20"))
+    builder.row(InlineKeyboardButton(text="USDT TRC-20", callback_data="pay_trc20"))
+    builder.row(InlineKeyboardButton(text="Перевод по карте", callback_data="pay_card"))
     return builder.as_markup()

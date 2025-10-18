@@ -3,6 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 import datetime
 import enum
+import calendar
 
 Base = declarative_base()
 
@@ -25,6 +26,7 @@ class User(Base):
     
     modes = relationship("Mode", back_populates="user", cascade="all, delete-orphan")
     schedules = relationship("Schedule", back_populates="user", cascade="all, delete-orphan")
+    payment_requests = relationship("PaymentRequest", back_populates="user", cascade="all, delete-orphan")
     
     def is_subscription_active(self):
         return datetime.datetime.now() <= self.subscription_until
@@ -63,6 +65,28 @@ class Schedule(Base):
     
     def __repr__(self):
         return f"<Schedule(id={self.id}, mode_id={self.mode_id}, start_time={self.start_time}, end_time={self.end_time})>"
+
+class PaymentMethod(enum.Enum):
+    BEP20 = "bep20"
+    TRC20 = "trc20"
+    CARD = "card"
+
+class PaymentStatus(enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+class PaymentRequest(Base):
+    __tablename__ = 'payment_requests'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    method = Column(Enum(PaymentMethod), nullable=False)
+    file_id = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    status = Column(Enum(PaymentStatus), default=PaymentStatus.PENDING)
+
+    user = relationship("User", back_populates="payment_requests")
 
 def init_db(db_url=None):
     """Инициализация базы данных"""

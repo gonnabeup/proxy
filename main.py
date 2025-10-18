@@ -50,7 +50,8 @@ async def main():
     # Инициализация планировщика
     scheduler = Scheduler(
         proxy_server=proxy_server,
-        check_interval=SCHEDULER_CHECK_INTERVAL
+        check_interval=SCHEDULER_CHECK_INTERVAL,
+        bot=bot
     )
     
     try:

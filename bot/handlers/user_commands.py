@@ -2,6 +2,7 @@ import logging
 import asyncio
 from datetime import datetime
 from aiogram import Dispatcher, types, F
+ 
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
@@ -63,6 +64,9 @@ class ScheduleState(StatesGroup):
 
 class TimezoneState(StatesGroup):
     waiting_for_timezone_input = State()
+
+class PaymentState(StatesGroup):
+    waiting_for_screenshot = State()
 
 async def cmd_start(message: types.Message, state: FSMContext = None):
     """Обработчик команды /start"""
@@ -138,7 +142,7 @@ async def cmd_addmode(message: types.Message, state: FSMContext):
     """Обработчик команды /addmode"""
     await state.set_state(AddModeState.waiting_for_name)
     await message.answer(
-        "Введите название режима (например, 'f2pool btc'):",
+        "Введите название режима (например, 'anypossiblename123'):",
         reply_markup=get_cancel_keyboard()
     )
 
@@ -155,7 +159,7 @@ async def process_mode_name(message: types.Message, state: FSMContext):
     
     # Переходим к следующему шагу
     await state.set_state(AddModeState.waiting_for_host)
-    await message.answer("Введите хост пула (например, 'btc.f2pool.com'):", reply_markup=get_cancel_keyboard())
+    await message.answer("Введите хост пула, без указания протокола (например, пул дал 'stratum+tcp://btc.pool.com', надо ввести 'btc.pool.com'):", reply_markup=get_cancel_keyboard())
 
 async def process_mode_host(message: types.Message, state: FSMContext):
     """Обработка ввода хоста пула"""
@@ -185,7 +189,7 @@ async def process_mode_port(message: types.Message, state: FSMContext):
         
         # Переходим к следующему шагу
         await state.set_state(AddModeState.waiting_for_alias)
-        await message.answer("Введите алиас для пула (например, 'smagin83'):", reply_markup=get_cancel_keyboard())
+        await message.answer("Введите алиас для пула (например, 'poolsalias'):", reply_markup=get_cancel_keyboard())
     except ValueError:
         await message.answer("Порт должен быть числом. Попробуйте еще раз:")
 
@@ -755,6 +759,119 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
         finally:
             db_session.close()
 
+# ===== Оплата подписки =====
+def _payment_settings():
+    try:
+        from config.settings import WALLET_BEP20_ADDRESS, WALLET_TRC20_ADDRESS, CARD_NUMBER
+        return {
+            "bep20_addr": WALLET_BEP20_ADDRESS,
+            "trc20_addr": WALLET_TRC20_ADDRESS,
+            "card_number": CARD_NUMBER,
+        }
+    except Exception:
+        return {
+            "bep20_addr": "",
+            "trc20_addr": "",
+            "card_number": "",
+        }
+
+async def cmd_pay(message: types.Message):
+    text = (
+        "Выберите способ оплаты подписки:\n\n"
+        "— USDT BEP-20\n"
+        "— USDT TRC-20\n"
+        "— Перевод по номеру карты"
+    )
+    from bot.keyboards import get_pay_methods_keyboard
+    await message.answer(text, reply_markup=get_pay_methods_keyboard())
+
+async def process_pay_open(callback: types.CallbackQuery):
+    from bot.keyboards import get_pay_methods_keyboard
+    await callback.message.answer("Выберите способ оплаты:", reply_markup=get_pay_methods_keyboard())
+    await callback.answer()
+
+async def process_pay_method(callback: types.CallbackQuery, state: FSMContext):
+    data = callback.data
+    settings = _payment_settings()
+    method = None
+    caption = None
+
+    if data == "pay_bep20":
+        method = "bep20"
+        caption = (
+            f"USDT BEP-20\nАдрес: {settings['bep20_addr']}\n\n"
+            "Отправьте скриншот оплаты одним фото."
+        )
+    elif data == "pay_trc20":
+        method = "trc20"
+        caption = (
+            f"USDT TRC-20\nАдрес: {settings['trc20_addr']}\n\n"
+            "Отправьте скриншот оплаты одним фото."
+        )
+    elif data == "pay_card":
+        method = "card"
+        caption = (
+            f"Перевод по карте\nНомер: {settings['card_number']}\n\n"
+            "Отправьте скриншот оплаты одним фото."
+        )
+
+    if not method:
+        await callback.answer()
+        return
+
+    await state.set_state(PaymentState.waiting_for_screenshot)
+    await state.update_data(payment_method=method)
+
+    # По QR кодам отмена: отправляем только реквизиты текстом
+    await callback.message.answer(caption)
+
+    await callback.answer()
+
+async def process_payment_screenshot(message: types.Message, state: FSMContext, db_session):
+    # Ожидаем фото оплаты
+    user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+    is_admin = _is_admin_user(user)
+
+    # Проверка отмены
+    if _is_cancel_text(message.text or ""):
+        await message.answer("Действие отменено.", reply_markup=get_main_keyboard(is_admin=is_admin))
+        await state.clear()
+        return
+
+    if not message.photo:
+        await message.answer("Пожалуйста, отправьте скриншот оплаты одним фото или нажмите Отмена.")
+        return
+
+    data = await state.get_data()
+    method = data.get("payment_method")
+    if not method:
+        await message.answer("Способ оплаты не выбран. Нажмите /pay и выберите способ.")
+        await state.clear()
+        return
+
+    try:
+        from db.models import PaymentRequest, PaymentMethod, PaymentStatus
+        file_id = message.photo[-1].file_id
+        pr = PaymentRequest(
+            user_id=user.id,
+            method=PaymentMethod(method),
+            file_id=file_id,
+            status=PaymentStatus.PENDING,
+        )
+        db_session.add(pr)
+        db_session.commit()
+        await message.answer(
+            "Заявка на оплату отправлена на проверку. Администратор свяжется при подтверждении.",
+            reply_markup=get_main_keyboard(is_admin=is_admin)
+        )
+    except Exception:
+        await message.answer(
+            "Не удалось сохранить заявку. Попробуйте позже или свяжитесь с администратором.",
+            reply_markup=get_main_keyboard(is_admin=is_admin)
+        )
+    finally:
+        await state.clear()
+
 def register_user_handlers(dp: Dispatcher):
     """Регистрация обработчиков пользовательских команд"""
     # Базовые команды
@@ -908,7 +1025,25 @@ def register_user_handlers(dp: Dispatcher):
     
     dp.message.register(cmd_status_wrapper, Command("status"))
     dp.message.register(cmd_help, Command("help"))
-    
+
+    # Оплата
+    dp.message.register(cmd_pay, Command("pay"))
+
+    async def process_payment_screenshot_wrapper(msg: types.Message, state: FSMContext):
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            await process_payment_screenshot(msg, state, db_session)
+        finally:
+            db_session.close()
+    dp.message.register(process_payment_screenshot_wrapper, PaymentState.waiting_for_screenshot, F.photo)
+
+    # Колбэки оплаты
+    dp.callback_query.register(process_pay_open, F.data == "pay_open")
+    async def process_pay_method_wrapper(cb: types.CallbackQuery, state: FSMContext):
+        await process_pay_method(cb, state)
+    dp.callback_query.register(process_pay_method_wrapper, F.data.in_({"pay_bep20", "pay_trc20", "pay_card"}))
+
     # Отмена
     dp.message.register(lambda msg: cmd_cancel(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id)), Command("cancel"))
     dp.message.register(lambda msg: cmd_cancel(msg, dp.fsm.get_context(msg.bot, msg.from_user.id, msg.chat.id)), F.text.lower() == "отмена")

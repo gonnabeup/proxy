@@ -1,7 +1,8 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from db.models import User, Mode, Schedule, get_session, init_db
 from proxy.utils import is_time_in_range
@@ -9,17 +10,22 @@ from proxy.utils import is_time_in_range
 logger = logging.getLogger(__name__)
 
 class Scheduler:
-    def __init__(self, proxy_server, check_interval=60):
+    def __init__(self, proxy_server, check_interval=60, bot=None):
         """
         Инициализация планировщика
         
         :param proxy_server: Экземпляр прокси-сервера для обновления режимов
         :param check_interval: Интервал проверки расписаний в секундах
+        :param bot: Экземпляр Telegram-бота для уведомлений (опционально)
         """
         self.proxy_server = proxy_server
         self.check_interval = check_interval
+        self.bot = bot
         self.running = False
         self.task = None
+        # Защита от повторных уведомлений в течение одного дня
+        # Формат: {user_id: {date: set(days_left)}}
+        self._notified_today = {}
         
     async def start(self):
         """Запуск планировщика"""
@@ -50,6 +56,7 @@ class Scheduler:
         while self.running:
             try:
                 await self._check_schedules()
+                await self._check_subscription_reminders()
             except Exception as e:
                 logger.error(f"Ошибка при проверке расписаний: {e}")
                 
@@ -100,5 +107,50 @@ class Scheduler:
                 for port in changed_ports:
                     await self.proxy_server.reload_port(port)
         
+        finally:
+            db_session.close()
+
+    async def _check_subscription_reminders(self):
+        """Отправка уведомлений пользователям за 3, 2 и 1 день до окончания подписки"""
+        if self.bot is None:
+            return
+        logger.debug("Проверка напоминаний о подписке...")
+
+        engine = init_db()
+        db_session = get_session(engine)
+        try:
+            users = db_session.query(User).all()
+            for user in users:
+                # Дата в часовом поясе пользователя
+                tz_name = user.timezone or "Europe/Moscow"
+                today_user = datetime.now(ZoneInfo(tz_name)).date()
+                expiry_date = user.subscription_until.date()
+
+                days_left = (expiry_date - today_user).days
+                if days_left in (3, 2, 1):
+                    notified_for_date = self._notified_today.setdefault(user.id, {})
+                    notified_set = notified_for_date.setdefault(today_user, set())
+                    if days_left in notified_set:
+                        continue
+
+                    if days_left == 1:
+                        prefix = "Ваша подписка заканчивается завтра"
+                    elif days_left == 2:
+                        prefix = "Ваша подписка заканчивается через 2 дня"
+                    else:
+                        prefix = "Ваша подписка заканчивается через 3 дня"
+
+                    message = (
+                        f"⚠️ Напоминание\n"
+                        f"{prefix} (до {user.subscription_until.strftime('%d.%m.%Y %H:%M')}).\n\n"
+                        f"Чтобы продлить, нажмите кнопку ниже."
+                    )
+                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Оплатить", callback_data="pay_open")]])
+                    try:
+                        await self.bot.send_message(chat_id=user.tg_id, text=message, reply_markup=kb)
+                        notified_set.add(days_left)
+                        logger.info(f"Отправлено напоминание ({days_left} дн.) пользователю {user.username} (ID: {user.id})")
+                    except Exception as e:
+                        logger.error(f"Ошибка отправки напоминания пользователю {user.username} (ID: {user.id}): {e}")
         finally:
             db_session.close()
