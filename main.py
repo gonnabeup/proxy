@@ -11,7 +11,7 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
+from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
 
 from config.settings import (
     BOT_TOKEN, PROXY_HOST, DEFAULT_PORT_RANGE, 
@@ -67,24 +67,10 @@ async def set_commands(bot: Bot):
     db_session = get_session(engine)
     try:
         admins = db_session.query(User).filter(User.role.in_([UserRole.ADMIN, UserRole.SUPERADMIN])).all()
-        # Импортируем модели для выборки админов
-        from db.models import User, UserRole
-        
         # Устанавливаем команды только для приватных чатов
-        from aiogram.types import BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
         await bot.set_my_commands(default_commands, scope=BotCommandScopeAllPrivateChats())
         # Очищаем меню команд в группах/супергруппах
         await bot.set_my_commands([], scope=BotCommandScopeAllGroupChats())
-        
-        # Список админов/суперадминов
-        admins = await User.get_admins_roles(bot) if hasattr(User, 'get_admins_roles') else None
-        if admins is None:
-            # Фоллбек: выборка по ролям из БД
-            from sqlalchemy import select
-            from db.models import async_session
-            async with async_session() as session:
-                result = await session.execute(select(User).where(User.role.in_([UserRole.ADMIN, UserRole.SUPERADMIN])))
-                admins = result.scalars().all()
         
         # Для каждого админа ставим расширенное меню в его приватном чате
         for admin in admins:
