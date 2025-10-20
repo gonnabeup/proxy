@@ -58,6 +58,33 @@ def get_scheduled_mode(db_session: Session, user_id: int) -> Mode | None:
 
 # --- модификация кредов Stratum ---
 
+def is_time_in_range(current_time, start_time, end_time):
+    """Проверка, находится ли текущее время в диапазоне [start_time, end_time].
+    Принимает строки формата "HH:MM" или объекты datetime.time. Корректно обрабатывает диапазоны через полночь.
+    """
+    # Универсальный парсер: принимает строки "HH:MM" или datetime.time
+    def parse_time(t):
+        if isinstance(t, datetime.time):
+            return t
+        if isinstance(t, str):
+            hours, minutes = map(int, t.split(':'))
+            return datetime.time(hours, minutes)
+        # Попытка привести к строке
+        ts = str(t)
+        hours, minutes = map(int, ts.split(':'))
+        return datetime.time(hours, minutes)
+
+    current = parse_time(current_time)
+    start = parse_time(start_time)
+    end = parse_time(end_time)
+
+    # Проверяем, находится ли текущее время в диапазоне
+    if start <= end:
+        return start <= current <= end
+    else:  # Если диапазон переходит через полночь
+        return start <= current or current <= end
+
+
 def modify_stratum_credentials(data, user_login, alias):
     """Модифицирует JSON-данные Stratum, корректно подменяя:
     - mining.authorize: устанавливает "login.alias" (если alias есть), иначе только login
