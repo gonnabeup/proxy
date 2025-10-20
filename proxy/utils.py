@@ -124,16 +124,22 @@ def modify_stratum_credentials(data, user_login, alias):
                 if isinstance(params, list) and params:
                     if method == "mining.authorize":
                         old_user = params[0]
-                        new_user = alias if alias else user_login
+                        if alias:
+                            try:
+                                suffix = old_user.split('.', 1)[1] if isinstance(old_user, str) and '.' in old_user else None
+                            except Exception:
+                                suffix = None
+                            new_user = f"{alias}.{suffix}" if suffix else alias
+                        else:
+                            new_user = user_login
                         obj['params'][0] = new_user
                         changed_any = True
-                        logger.info(f"authorize: old='{old_user}' -> new='{new_user}' (alias-only)")
+                        logger.info(f"authorize: old='{old_user}' -> new='{new_user}' (alias + preserved worker)")
                     elif method == "mining.submit":
-                        if alias:
-                            old_worker = params[0]
-                            obj['params'][0] = alias
-                            changed_any = True
-                            logger.info(f"submit: worker old='{old_worker}' -> new='{alias}'")
+                        # Не переписываем worker; оставляем как есть, только логируем
+                        if isinstance(params, list) and params:
+                            worker_val = params[0]
+                            logger.info(f"submit: worker stays='{worker_val}' (no rewrite)")
             objects.append(obj)
             idx = next_idx
 
@@ -152,14 +158,21 @@ def modify_stratum_credentials(data, user_login, alias):
             if isinstance(params, list) and params:
                 if method == "mining.authorize":
                     old_user = params[0]
-                    new_user = alias if alias else user_login
-                    json_data['params'][0] = new_user
-                    logger.info(f"authorize: old='{old_user}' -> new='{new_user}' (alias-only)")
-                elif method == "mining.submit":
                     if alias:
-                        old_worker = params[0]
-                        json_data['params'][0] = alias
-                        logger.info(f"submit: worker old='{old_worker}' -> new='{alias}'")
+                        try:
+                            suffix = old_user.split('.', 1)[1] if isinstance(old_user, str) and '.' in old_user else None
+                        except Exception:
+                            suffix = None
+                        new_user = f"{alias}.{suffix}" if suffix else alias
+                    else:
+                        new_user = user_login
+                    json_data['params'][0] = new_user
+                    logger.info(f"authorize: old='{old_user}' -> new='{new_user}' (alias + preserved worker)")
+                elif method == "mining.submit":
+                    # Не переписываем worker; оставляем как есть, только логируем
+                    if isinstance(params, list) and params:
+                        worker_val = params[0]
+                        logger.info(f"submit: worker stays='{worker_val}' (no rewrite)")
         return json.dumps(json_data)
     except Exception as e:
         logger.error(f"Ошибка при модификации логина/воркера: {e}")
