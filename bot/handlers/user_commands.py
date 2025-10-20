@@ -148,7 +148,7 @@ async def cmd_addmode(message: types.Message, state: FSMContext):
     """Обработчик команды /addmode"""
     await state.set_state(AddModeState.waiting_for_name)
     await message.answer(
-        "Введите название профиля пула, для удобного переключения между пулами в будущем (название может быть любым, например, 'МОЙЛЮБИМЫЙПУЛ1'):",
+        "Введите название профиля пула, для удобного переключения между пулами (название может быть любым, например, 'МОЙЛЮБИМЫЙПУЛ1'):",
         reply_markup=get_cancel_keyboard()
     )
 
@@ -640,7 +640,7 @@ async def cmd_status(message: types.Message, db_session):
         response += f"Пул: {active_mode.host}:{active_mode.port}\n"
         response += f"Имя воркера: {active_mode.alias}\n"
     else:
-        response += "\nАктивный пул не выбран. Используйте кнопку Установить режим или команду /setmode для выбора пула."
+        response += "\nАктивный пул не выбран. Используйте кнопку Выбор текущего режима или команду /setmode для выбора пула."
     
     await message.answer(response)
 
