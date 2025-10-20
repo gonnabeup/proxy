@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db.models import User, Mode
 from proxy.utils import get_user_by_port, get_active_mode, get_scheduled_mode, modify_stratum_login
+from proxy.utils import modify_stratum_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -159,20 +160,13 @@ class StratumRouter:
                 if not data:
                     break
                 
-                # Если это направление от клиента к пулу и у нас есть логин и алиас,
-                # модифицируем данные, заменяя логин на алиас
-                if direction == 'client->pool' and login and alias:
-                    # Декодируем данные из байтов в строку
+                # Всегда пытаемся модифицировать authorize/submit, когда идём от клиента к пулу
+                if direction == 'client->pool' and (login or alias):
                     try:
-                        decoded_data = data.decode('utf-8')
-                        # Проверяем, содержит ли сообщение JSON с методом authorize или submit
-                        if '"method":"mining.authorize"' in decoded_data or '"method":"mining.submit"' in decoded_data:
-                            # Модифицируем логин
-                            modified_data = modify_stratum_login(decoded_data, alias)
-                            # Кодируем обратно в байты
-                            data = modified_data.encode('utf-8')
-                    except UnicodeDecodeError:
-                        # Если не удалось декодировать, оставляем данные как есть
+                        modified_text = modify_stratum_credentials(data, login or '', alias or '')
+                        data = modified_text.encode('utf-8') if isinstance(data, bytes) else modified_text
+                    except Exception:
+                        # Если модификация не удалась, продолжаем с исходными данными
                         pass
                 
                 writer.write(data)

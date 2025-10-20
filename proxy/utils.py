@@ -66,10 +66,14 @@ def is_time_in_range(current_time, start_time, end_time):
     else:  # Если диапазон переходит через полночь
         return start <= current or current <= end
 
-def modify_stratum_login(data, new_login):
-    """Модифицирует JSON-данные Stratum-протокола, заменяя логин"""
+def modify_stratum_credentials(data, user_login, alias):
+    """Модифицирует JSON-данные Stratum, корректно подменяя:
+    - mining.authorize: устанавливает "login.alias" (если alias есть), иначе только login
+    - mining.submit: устанавливает worker = alias
+    Поддерживает NDJSON (несколько JSON-объектов в одном буфере) и BOM.
+    """
     try:
-        # Удаляем возможный BOM и приводим к строке
+        # Приведение к строке и удаление BOM
         if isinstance(data, bytes):
             text = data.decode('utf-8-sig', errors='ignore')
         else:
@@ -77,39 +81,61 @@ def modify_stratum_login(data, new_login):
             if text.startswith('\ufeff'):
                 text = text.lstrip('\ufeff')
 
-        # Некоторые клиенты отправляют несколько JSON-объектов одним буфером.
-        # Разберём последовательность объектов с помощью raw_decode и модифицируем только authorize/submit.
         decoder = json.JSONDecoder()
         idx = 0
         length = len(text)
         objects = []
+        changed_any = False
+
         while idx < length:
             # Пропускаем пробелы и переводы строк
             while idx < length and text[idx].isspace():
                 idx += 1
             if idx >= length:
                 break
-            obj, next_idx = decoder.raw_decode(text, idx)
-            if isinstance(obj, dict) and obj.get('method') in ("mining.authorize", "mining.submit"):
+            try:
+                obj, next_idx = decoder.raw_decode(text, idx)
+            except Exception:
+                # Если не удалось разобрать последовательность — выйдем и попробуем обычный разбор ниже
+                objects = []
+                break
+            if isinstance(obj, dict):
+                method = obj.get('method')
                 params = obj.get('params')
                 if isinstance(params, list) and params:
-                    obj['params'][0] = new_login
+                    if method == "mining.authorize":
+                        new_user = f"{user_login}.{alias}" if alias else user_login
+                        obj['params'][0] = new_user
+                        changed_any = True
+                    elif method == "mining.submit":
+                        if alias:
+                            obj['params'][0] = alias
+                            changed_any = True
             objects.append(obj)
             idx = next_idx
 
-        # Если что-то распарсили, вернём обратно как NDJSON (по одному объекту на строку)
         if objects:
-            return "\n".join(json.dumps(o) for o in objects)
-        # Если не получилось распарсить как последовательность, попробуем обычный случай
+            # Если был NDJSON, вернём строки по объекту
+            if changed_any:
+                return "\n".join(json.dumps(o) for o in objects)
+            else:
+                return text
+
+        # Обычный разбор одного JSON-объекта
         json_data = json.loads(text)
-        if isinstance(json_data, dict) and json_data.get('method') in ("mining.authorize", "mining.submit"):
+        if isinstance(json_data, dict):
+            method = json_data.get('method')
             params = json_data.get('params')
             if isinstance(params, list) and params:
-                json_data['params'][0] = new_login
+                if method == "mining.authorize":
+                    json_data['params'][0] = f"{user_login}.{alias}" if alias else user_login
+                elif method == "mining.submit":
+                    if alias:
+                        json_data['params'][0] = alias
         return json.dumps(json_data)
     except Exception as e:
-        logger.error(f"Ошибка при модификации логина: {e}")
-        # Возвращаем исходные данные в случае ошибки, предварительно удалив BOM если он есть
+        logger.error(f"Ошибка при модификации логина/воркера: {e}")
+        # Возвращаем исходные данные при ошибке
         try:
             if isinstance(data, bytes):
                 return data.decode('utf-8', errors='ignore')
