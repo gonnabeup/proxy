@@ -3,6 +3,8 @@ import asyncio
 from sqlalchemy.orm import Session
 import sys
 import os
+import json
+import binascii
 
 # Добавляем корневую директорию в путь для импорта
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -98,6 +100,7 @@ class StratumRouter:
         try:
             pool_reader, pool_writer = await asyncio.open_connection(mode.host, mode.port)
             logger.info(f"Подключено к пулу {mode.host}:{mode.port} для пользователя {user.username}")
+            logger.info(f"Параметры режима: login='{user.login}', alias='{mode.alias}', user_port={client_port}, pool={mode.host}:{mode.port}")
             
             # Сохраняем информацию о соединении
             connection_info = {
@@ -154,22 +157,70 @@ class StratumRouter:
 
     async def _proxy_data(self, reader, writer, login, alias, direction):
         """Проксирование данных между клиентом и пулом"""
+        tls_warned = False
         try:
             while not reader.at_eof():
                 data = await reader.read(8192)
                 if not data:
                     break
                 
+                # Диагностика: размер чанка
+                logger.debug(f"Чанк {direction}: {len(data)} байт")
+
                 # Всегда пытаемся модифицировать authorize/submit, когда идём от клиента к пулу
                 if direction == 'client->pool' and (login or alias):
+                    # Детект TLS: первые байты TLS-записи 0x16 0x03
                     try:
-                        modified_text = modify_stratum_credentials(data, login or '', alias or '')
-                        data = modified_text.encode('utf-8') if isinstance(data, bytes) else modified_text
-                    except Exception:
-                        # Если модификация не удалась, продолжаем с исходными данными
-                        pass
+                        if isinstance(data, (bytes, bytearray)) and len(data) >= 2 and data[0] == 0x16 and data[1] == 0x03:
+                            if not tls_warned:
+                                head_hex = binascii.hexlify(data[:16]).decode('ascii')
+                                logger.info(
+                                    f"Обнаружен TLS/SSL-трафик от клиента (hex: {head_hex}). "
+                                    f"Подмена логина/воркера невозможна без TLS-терминации. "
+                                    f"Рекомендуется настроить пул на не-SSL порт (например 3333)."
+                                )
+                                tls_warned = True
+                            # В TLS режимах не трогаем данные
+                        else:
+                            # Попытка декодировать для выявления JSON (Stratum)
+                            text = data.decode('utf-8', errors='ignore')
+                            stripped = text.strip()
+                            looks_json = stripped.startswith('{') or stripped.startswith('[')
+                            has_stratum = ('"method"' in text) or ('mining.' in text)
+
+                            if looks_json and has_stratum:
+                                # Логируем исходный метод и params[0]
+                                try:
+                                    first_line = stripped.splitlines()[0]
+                                    obj = json.loads(first_line)
+                                    method = obj.get('method')
+                                    params = obj.get('params')
+                                    p0 = params[0] if isinstance(params, list) and params else None
+                                    logger.info(f"Стратум-запрос: {method}, params[0]={p0}")
+                                except Exception as ex:
+                                    logger.debug(f"Не удалось разобрать JSON для логирования: {ex}")
+
+                                try:
+                                    modified_text = modify_stratum_credentials(text, login or '', alias or '')
+                                    if modified_text != text:
+                                        # Выводим краткое резюме подмены
+                                        logger.info(
+                                            f"Подмена кредов выполнена: login='{login}' alias='{alias}'"
+                                        )
+                                    data = modified_text.encode('utf-8')
+                                except Exception as ex:
+                                    logger.warning(f"Ошибка при попытке подмены кредов: {ex}")
+                                    # Оставляем оригинальные байты
+                            else:
+                                # Не JSON — выводим первые байты для диагностики
+                                head_hex = binascii.hexlify(data[:32]).decode('ascii')
+                                logger.debug(f"{direction}: не-JSON поток (hex head {head_hex}) — оставляем без изменений")
+                    except Exception as log_ex:
+                        logger.debug(f"Логирование/детекция клиента не выполнено: {log_ex}")
                 
-                writer.write(data)
+                # Отправляем дальше
+                out_bytes = data if isinstance(data, (bytes, bytearray)) else str(data).encode('utf-8')
+                writer.write(out_bytes)
                 await writer.drain()
                 
         except asyncio.CancelledError:

@@ -13,64 +13,57 @@ from db.models import User, Mode, Schedule
 
 logger = logging.getLogger(__name__)
 
-def get_user_by_port(session: Session, port: int) -> User:
-    """Получение пользователя по порту"""
-    return session.query(User).filter(User.port == port).first()
+# --- вспомогательные функции работы с БД и режимами ---
 
-def get_active_mode(session: Session, user_id: int) -> Mode:
-    """Получение активного режима пользователя"""
-    return session.query(Mode).filter(Mode.user_id == user_id, Mode.is_active == 1).first()
-
-def get_scheduled_mode(session: Session, user_id: int) -> Mode:
-    """Получение режима по расписанию"""
-    # Определяем часовой пояс пользователя
-    user = session.query(User).filter(User.id == user_id).first()
-    if not user:
+def get_user_by_port(db_session: Session, port: int) -> User | None:
+    try:
+        return db_session.query(User).filter(User.port == port).first()
+    except Exception as e:
+        logger.error(f"Ошибка при получении пользователя по порту {port}: {e}")
         return None
-    tz_name = user.timezone or "Europe/Moscow"
-    now = datetime.datetime.now(ZoneInfo(tz_name))
-    current_time = now.strftime("%H:%M")
-    
-    # Получаем все расписания пользователя
-    schedules = session.query(Schedule).filter(Schedule.user_id == user_id).all()
-    
-    for schedule in schedules:
-        # Проверяем, попадает ли текущее время в диапазон расписания
-        if is_time_in_range(current_time, schedule.start_time, schedule.end_time):
-            # Возвращаем режим из расписания
-            return session.query(Mode).filter(Mode.id == schedule.mode_id).first()
-    
-    return None
 
-def is_time_in_range(current_time, start_time, end_time):
-    """Проверка, находится ли текущее время в диапазоне"""
-    # Универсальный парсер: принимает строки "HH:MM" или datetime.time
-    def parse_time(t):
-        if isinstance(t, datetime.time):
-            return t
-        if isinstance(t, str):
-            hours, minutes = map(int, t.split(':'))
-            return datetime.time(hours, minutes)
-        # Попытка привести к строке
-        ts = str(t)
-        hours, minutes = map(int, ts.split(':'))
-        return datetime.time(hours, minutes)
 
-    current = parse_time(current_time)
-    start = parse_time(start_time)
-    end = parse_time(end_time)
-    
-    # Проверяем, находится ли текущее время в диапазоне
-    if start <= end:
-        return start <= current <= end
-    else:  # Если диапазон переходит через полночь
-        return start <= current or current <= end
+def get_active_mode(db_session: Session, user_id: int) -> Mode | None:
+    try:
+        return db_session.query(Mode).filter(Mode.user_id == user_id, Mode.is_active == 1).first()
+    except Exception as e:
+        logger.error(f"Ошибка при получении активного режима пользователя {user_id}: {e}")
+        return None
+
+
+def get_scheduled_mode(db_session: Session, user_id: int) -> Mode | None:
+    """Возвращает режим, активный по расписанию в локальном времени пользователя."""
+    try:
+        user = db_session.query(User).filter(User.id == user_id).first()
+        if not user:
+            return None
+        tz = ZoneInfo(user.timezone or 'UTC')
+        now_local = datetime.datetime.now(tz)
+        weekday = now_local.weekday()  # 0=Monday ... 6=Sunday
+        time_str = now_local.strftime('%H:%M')
+        sched = db_session.query(Schedule).filter(
+            Schedule.user_id == user_id,
+            Schedule.weekday == weekday,
+            Schedule.start_time <= time_str,
+            Schedule.end_time >= time_str,
+        ).first()
+        if not sched:
+            return None
+        mode = db_session.query(Mode).filter(Mode.id == sched.mode_id).first()
+        return mode
+    except Exception as e:
+        logger.error(f"Ошибка при получении расписания для пользователя {user_id}: {e}")
+        return None
+
+
+# --- модификация кредов Stratum ---
 
 def modify_stratum_credentials(data, user_login, alias):
     """Модифицирует JSON-данные Stratum, корректно подменяя:
     - mining.authorize: устанавливает "login.alias" (если alias есть), иначе только login
     - mining.submit: устанавливает worker = alias
     Поддерживает NDJSON (несколько JSON-объектов в одном буфере) и BOM.
+    Добавлено подробное логирование изменений параметров.
     """
     try:
         # Приведение к строке и удаление BOM
@@ -104,13 +97,17 @@ def modify_stratum_credentials(data, user_login, alias):
                 params = obj.get('params')
                 if isinstance(params, list) and params:
                     if method == "mining.authorize":
+                        old_user = params[0]
                         new_user = f"{user_login}.{alias}" if alias else user_login
                         obj['params'][0] = new_user
                         changed_any = True
+                        logger.info(f"authorize: old='{old_user}' -> new='{new_user}'")
                     elif method == "mining.submit":
                         if alias:
+                            old_worker = params[0]
                             obj['params'][0] = alias
                             changed_any = True
+                            logger.info(f"submit: worker old='{old_worker}' -> new='{alias}'")
             objects.append(obj)
             idx = next_idx
 
@@ -128,10 +125,15 @@ def modify_stratum_credentials(data, user_login, alias):
             params = json_data.get('params')
             if isinstance(params, list) and params:
                 if method == "mining.authorize":
-                    json_data['params'][0] = f"{user_login}.{alias}" if alias else user_login
+                    old_user = params[0]
+                    new_user = f"{user_login}.{alias}" if alias else user_login
+                    json_data['params'][0] = new_user
+                    logger.info(f"authorize: old='{old_user}' -> new='{new_user}'")
                 elif method == "mining.submit":
                     if alias:
+                        old_worker = params[0]
                         json_data['params'][0] = alias
+                        logger.info(f"submit: worker old='{old_worker}' -> new='{alias}'")
         return json.dumps(json_data)
     except Exception as e:
         logger.error(f"Ошибка при модификации логина/воркера: {e}")
