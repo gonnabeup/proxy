@@ -80,11 +80,17 @@ async def cmd_start(message: types.Message, state: FSMContext = None):
         
         if user:
             await message.answer(
-                f"Добро пожаловать, {user.username}!\n\n"
-                f"Ваш порт: {user.port}\n"
-                f"Ваш логин: {user.login}\n"
-                f"Подписка активна до: {user.subscription_until.strftime('%d.%m.%Y')}\n\n"
-                "Используйте команды для управления прокси.",
+                (
+                    f"Добро пожаловать, {user.username}!\n\n"
+                    f"Ваш порт: {user.port}\n"
+                    f"Ваш логин: {user.login}\n"
+                    f"Подписка активна до: {user.subscription_until.strftime('%d.%m.%Y')}\n\n"
+                    "Быстрый старт:\n"
+                    "1) «Добавить Пул» — добавьте пул.\n"
+                    "2) «Выбор текущего пула» — выберите активный.\n"
+                    f"3) Подключите майнеры \nСтрока подключения: 81.30.105.170:{user.port}, воркер: {user.login}, пароль: x\n"
+                    "\n Также вы можете добавить расписания для автоматического переключения между пулами в определенное время. (Не забудьте установить нужный часовой пояс)"
+                ),
                 reply_markup=get_main_keyboard(is_admin=is_admin)
             )
         else:
@@ -142,7 +148,7 @@ async def cmd_addmode(message: types.Message, state: FSMContext):
     """Обработчик команды /addmode"""
     await state.set_state(AddModeState.waiting_for_name)
     await message.answer(
-        "Введите название режима (например, 'anypossiblename123'):",
+        "Введите название профиля пула, для удобного переключения между пулами в будущем (название может быть любым, например, 'МОЙЛЮБИМЫЙПУЛ1'):",
         reply_markup=get_cancel_keyboard()
     )
 
@@ -159,7 +165,7 @@ async def process_mode_name(message: types.Message, state: FSMContext):
     
     # Переходим к следующему шагу
     await state.set_state(AddModeState.waiting_for_host)
-    await message.answer("Введите хост пула, без указания протокола (например, пул дал 'stratum+tcp://btc.pool.com', надо ввести 'btc.pool.com'):", reply_markup=get_cancel_keyboard())
+    await message.answer("Введите хост пула, без порта и указания протокола (например, на сайте пула 'stratum+tcp://btc.pool.com:6000', введите просто 'btc.pool.com'):", reply_markup=get_cancel_keyboard())
 
 async def process_mode_host(message: types.Message, state: FSMContext):
     """Обработка ввода хоста пула"""
@@ -189,7 +195,7 @@ async def process_mode_port(message: types.Message, state: FSMContext):
         
         # Переходим к следующему шагу
         await state.set_state(AddModeState.waiting_for_alias)
-        await message.answer("Введите алиас для пула (например, 'poolsalias'):", reply_markup=get_cancel_keyboard())
+        await message.answer("Введите имя воркера для пула (например, 'WorkerName'):", reply_markup=get_cancel_keyboard())
     except ValueError:
         await message.answer("Порт должен быть числом. Попробуйте еще раз:")
 
@@ -221,11 +227,13 @@ async def process_mode_alias(message: types.Message, state: FSMContext, db_sessi
         
         is_admin = _is_admin_user(user)
         await message.answer(
-            f"Режим успешно добавлен!\n\n"
-            f"Название: {name}\n"
-            f"Хост: {host}\n"
-            f"Порт: {port}\n"
-            f"Алиас: {mode_alias}",
+            (
+                f"Пул успешно добавлен!\n\n"
+                f"Название: {name}\n"
+                f"Хост: {host}\n"
+                f"Порт: {port}\n"
+                f"Имя воркера: {mode_alias}\n\n"
+            ),
             reply_markup=get_main_keyboard(is_admin=is_admin)
         )
     else:
@@ -245,14 +253,14 @@ async def cmd_modes(message: types.Message, db_session):
     modes = db_session.query(Mode).filter(Mode.user_id == user.id).all()
     
     if not modes:
-        await message.answer("У вас пока нет добавленных режимов. Используйте /addmode для добавления.")
+        await message.answer("У вас пока нет добавленных пулов. Добавьте их с помощью кнопки Добавить пул или команды /addmode.")
         return
     
-    response = "Ваши режимы:\n\n"
+    response = "Ваши пулы:\n\n"
     for i, mode in enumerate(modes, 1):
         response += f"{i}. {mode.name}\n"
         response += f"   Хост: {mode.host}:{mode.port}\n"
-        response += f"   Алиас: {mode.alias}\n\n"
+        response += f"   Имя воркера: {mode.alias}\n\n"
     
     await message.answer(response)
 
@@ -267,7 +275,7 @@ async def cmd_setmode(message: types.Message, state: FSMContext, db_session):
     modes = db_session.query(Mode).filter(Mode.user_id == user.id).all()
     
     if not modes:
-        await message.answer("У вас пока нет добавленных режимов. Используйте /addmode для добавления.")
+        await message.answer("У вас пока нет добавленных пулов. Добавьте их с помощью кнопки Добавить пул или команды /addmode.")
         return
     
     await state.set_state(SetModeState.waiting_for_mode)
@@ -289,7 +297,7 @@ async def process_mode_callback(callback: types.CallbackQuery, state: FSMContext
 
         mode = db_session.query(Mode).filter(Mode.id == mode_id, Mode.user_id == user.id).first()
         if not mode:
-            await callback.message.answer("Режим не найден. Попробуйте еще раз.")
+            await callback.message.answer("Пул не найден. Попробуйте еще раз.")
             await callback.answer()
             return
 
@@ -300,11 +308,11 @@ async def process_mode_callback(callback: types.CallbackQuery, state: FSMContext
 
         is_admin = _is_admin_user(user)
         await callback.message.answer(
-            f"Активный режим установлен: {mode.name}",
+            f"Активный пул установлен: {mode.name}",
             reply_markup=get_main_keyboard(is_admin=is_admin)
         )
     except Exception:
-        await callback.message.answer("Ошибка обработки выбора режима. Попробуйте снова.")
+        await callback.message.answer("Ошибка обработки выбора пула. Попробуйте снова.")
     finally:
         await callback.answer()
         await state.clear()
@@ -324,7 +332,7 @@ async def process_mode_selection(message: types.Message, state: FSMContext, db_s
         mode = db_session.query(Mode).filter(Mode.id == mode_id, Mode.user_id == user.id).first()
         
         if not mode:
-            await message.answer("Режим не найден. Попробуйте еще раз.")
+            await message.answer("Пул не найден. Попробуйте еще раз.")
             return
         
         # Снимаем флаг активности у предыдущего режима и активируем выбранный
@@ -338,7 +346,7 @@ async def process_mode_selection(message: types.Message, state: FSMContext, db_s
             reply_markup=get_main_keyboard(is_admin=is_admin)
         )
     except ValueError:
-        await message.answer("Пожалуйста, введите номер режима.")
+        await message.answer("Пожалуйста, введите номер пула.")
     finally:
         # Сбрасываем состояние FSM
         await state.clear()
@@ -370,7 +378,7 @@ async def process_schedule_action(message: types.Message, state: FSMContext, db_
         modes = db_session.query(Mode).filter(Mode.user_id == user.id).all()
         
         if not modes:
-            await message.answer("У вас пока нет добавленных режимов. Используйте /addmode для добавления.")
+            await message.answer("У вас пока нет добавленных пулов. Добавьте их с помощью кнопки Добавить пул или команды /addmode.")
             await state.clear()
             return
         
@@ -415,7 +423,7 @@ async def process_schedule_mode(message: types.Message, state: FSMContext, db_se
         mode = db_session.query(Mode).filter(Mode.id == mode_id, Mode.user_id == user.id).first()
         
         if not mode:
-            await message.answer("Режим не найден. Попробуйте еще раз.")
+            await message.answer("Пул не найден. Попробуйте еще раз.")
             return
         
         # Сохраняем выбранный режим в состоянии
@@ -428,7 +436,7 @@ async def process_schedule_mode(message: types.Message, state: FSMContext, db_se
             reply_markup=get_cancel_keyboard()
         )
     except ValueError:
-        await message.answer("Пожалуйста, введите номер режима.")
+        await message.answer("Пожалуйста, введите номер пула.")
 
 async def process_schedule_mode_callback(callback: types.CallbackQuery, state: FSMContext, db_session):
     """Обработка выбора режима для расписания через инлайн-кнопки"""
@@ -442,7 +450,7 @@ async def process_schedule_mode_callback(callback: types.CallbackQuery, state: F
             return
         mode = db_session.query(Mode).filter(Mode.id == mode_id, Mode.user_id == user.id).first()
         if not mode:
-            await callback.message.answer("Режим не найден. Попробуйте еще раз.")
+            await callback.message.answer("Пул не найден. Попробуйте еще раз.")
             await callback.answer()
             return
 
@@ -454,7 +462,7 @@ async def process_schedule_mode_callback(callback: types.CallbackQuery, state: F
             reply_markup=get_cancel_keyboard()
         )
     except Exception:
-        await callback.message.answer("Ошибка обработки выбора режима. Попробуйте снова.")
+        await callback.message.answer("Ошибка обработки выбора пула. Попробуйте снова.")
     finally:
         await callback.answer()
 
@@ -604,7 +612,7 @@ async def show_schedules(message: types.Message, db_session):
     response = "Ваши расписания:\n\n"
     for i, schedule in enumerate(schedules, 1):
         mode = db_session.query(Mode).filter(Mode.id == schedule.mode_id).first()
-        mode_name = mode.name if mode else "Неизвестный режим"
+        mode_name = mode.name if mode else "Неизвестный пул"
         
         response += f"{i}. {mode_name}\n"
         response += f"   Время: {schedule.start_time} - {schedule.end_time}\n\n"
@@ -628,11 +636,11 @@ async def cmd_status(message: types.Message, db_session):
     response += f"Подписка активна до: {user.subscription_until.strftime('%d.%m.%Y')}\n"
     
     if active_mode:
-        response += f"\nАктивный режим: {active_mode.name}\n"
+        response += f"\nАктивный пул: {active_mode.name}\n"
         response += f"Пул: {active_mode.host}:{active_mode.port}\n"
-        response += f"Алиас: {active_mode.alias}\n"
+        response += f"Имя воркера: {active_mode.alias}\n"
     else:
-        response += "\nАктивный режим не выбран. Используйте /setmode для выбора режима."
+        response += "\nАктивный пул не выбран. Используйте кнопку Установить режим или команду /setmode для выбора пула."
     
     await message.answer(response)
 
@@ -924,15 +932,8 @@ async def process_payment_screenshot(message: types.Message, state: FSMContext, 
             admins = db_session.query(User).filter(User.role.in_([UserRole.ADMIN, UserRole.SUPERADMIN])).all()
             if admins:
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-                info = (
-                    f"Новая заявка на оплату #{pr.id}\n"
-                    f"Пользователь: {user.username or user.tg_id} (tg_id={user.tg_id})\n"
-                    f"Метод: {pr.method.value}\n"
-                    f"Создано: {pr.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-                )
+                info = f"Пришла новая заявка на оплату! (#{pr.id})"
                 kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="Смотреть файл/скрин", callback_data=f"pay_view_{pr.id}")],
-                    [InlineKeyboardButton(text="Одобрить", callback_data=f"pay_approve_{pr.id}"), InlineKeyboardButton(text="Отклонить", callback_data=f"pay_reject_{pr.id}")],
                     [InlineKeyboardButton(text="Просмотрено", callback_data=f"pay_seen_{pr.id}")],
                 ])
                 for admin in admins:
@@ -955,8 +956,10 @@ def register_user_handlers(dp: Dispatcher):
     # Базовые команды
     dp.message.register(cmd_start, Command("start"))
     dp.message.register(cmd_setlogin, Command("setlogin"))
+    dp.message.register(cmd_setlogin, F.text == "Сменить логин")
     dp.message.register(cmd_settimezone, Command("timezone"))
     dp.message.register(cmd_settimezone, Command("settz"))
+    dp.message.register(cmd_settimezone, F.text == "Установить часовой пояс")
     
     # Модифицируем обработчики состояний для работы с БД
     async def process_login_input_wrapper(msg: types.Message, state: FSMContext):
@@ -971,6 +974,7 @@ def register_user_handlers(dp: Dispatcher):
     
     # Команды для режимов
     dp.message.register(cmd_addmode, Command("addmode"))
+    dp.message.register(cmd_addmode, F.text == "Добавить Пул")
     dp.message.register(process_mode_name, AddModeState.waiting_for_name)
     dp.message.register(process_mode_host, AddModeState.waiting_for_host)
     dp.message.register(process_mode_port, AddModeState.waiting_for_port)
@@ -994,6 +998,7 @@ def register_user_handlers(dp: Dispatcher):
             db_session.close()
     
     dp.message.register(cmd_modes_wrapper, Command("modes"))
+    dp.message.register(cmd_modes_wrapper, F.text == "Список ваших пулов")
     
     async def cmd_setmode_wrapper(msg: types.Message, state: FSMContext):
         engine = init_db()
@@ -1004,6 +1009,7 @@ def register_user_handlers(dp: Dispatcher):
             db_session.close()
     
     dp.message.register(cmd_setmode_wrapper, Command("setmode"))
+    dp.message.register(cmd_setmode_wrapper, F.text == "Выбор текущего пула")
     
     async def process_mode_selection_wrapper(msg: types.Message, state: FSMContext):
         engine = init_db()
@@ -1027,6 +1033,7 @@ def register_user_handlers(dp: Dispatcher):
     
     # Команды для расписаний
     dp.message.register(cmd_schedule, Command("schedule"))
+    dp.message.register(cmd_schedule, F.text == "Управление расписаниями")
     
     async def process_schedule_action_wrapper(msg: types.Message, state: FSMContext):
         engine = init_db()
@@ -1102,10 +1109,13 @@ def register_user_handlers(dp: Dispatcher):
             db_session.close()
     
     dp.message.register(cmd_status_wrapper, Command("status"))
+    dp.message.register(cmd_status_wrapper, F.text == "Статус")
     dp.message.register(cmd_help, Command("help"))
+    dp.message.register(cmd_help, F.text == "Помощь")
 
     # Оплата
     dp.message.register(cmd_pay, Command("pay"))
+    dp.message.register(cmd_pay, F.text == "Оплата подписки")
     # Callback из напоминаний: открыть выбор способа оплаты
     dp.callback_query.register(process_pay_open, F.data == "pay_open")
     # Callback кнопок метода оплаты

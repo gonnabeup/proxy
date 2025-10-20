@@ -18,14 +18,14 @@ def get_main_keyboard(is_admin=False):
     """Основная клавиатура с доступными командами"""
     builder = ReplyKeyboardBuilder()
     
-    # Кнопки для всех пользователей
-    builder.row(KeyboardButton(text="/status"), KeyboardButton(text="/modes"))
-    builder.row(KeyboardButton(text="/setlogin"), KeyboardButton(text="/setmode"))
-    builder.row(KeyboardButton(text="/addmode"), KeyboardButton(text="/schedule"))
-    builder.row(KeyboardButton(text="/timezone"), KeyboardButton(text="/pay"))
-    builder.row(KeyboardButton(text="/help"))
+    # Кнопки для всех пользователей (русские названия)
+    builder.row(KeyboardButton(text="Статус"), KeyboardButton(text="Список ваших пулов"))
+    builder.row(KeyboardButton(text="Сменить логин"), KeyboardButton(text="Выбор текущего пула"))
+    builder.row(KeyboardButton(text="Добавить Пул"), KeyboardButton(text="Управление расписаниями"))
+    builder.row(KeyboardButton(text="Установить часовой пояс"), KeyboardButton(text="Оплата подписки"))
+    builder.row(KeyboardButton(text="Помощь"))
     
-    # Дополнительные кнопки для администраторов
+    # Дополнительные кнопки для администраторов (оставляем как есть)
     if is_admin:
         builder.row(KeyboardButton(text="/adduser"), KeyboardButton(text="/listusers"))
         builder.row(KeyboardButton(text="/setsub"), KeyboardButton(text="/setport"))
