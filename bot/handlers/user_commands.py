@@ -730,7 +730,7 @@ async def cmd_help(message: types.Message):
             "/help - Показать эту справку\n\n"
         )
         if user:
-            connection_line = f"Строка подключения: 12v5a.tplinkdns.com:{user.port}, воркер: {user.login}.номер, пароль: x"
+            connection_line = f"Строка подключения: 81.30.105.170:{user.port}, воркер: {user.login}.номер, пароль: x"
             await message.answer(commands_block + connection_line)
         else:
             await message.answer(commands_block + "Вы не зарегистрированы в системе. Обратитесь к администратору.")
@@ -817,22 +817,25 @@ async def process_pay_method(callback: types.CallbackQuery, state: FSMContext):
     if data == "pay_bep20":
         method = "bep20"
         caption = (
-            f"USDT BEP-20\nАдрес: {settings['bep20_addr']}\n\n"
+            f"USDT BEP-20\nАдрес: <code>{settings['bep20_addr']}</code>\n\n"
+            "Нажмите на адрес, чтобы скопировать.\n"
             "Отправьте скриншот оплаты фото или файл (например, PDF).\n"
             "Для отмены нажмите кнопку «Отмена» ниже."
         )
     elif data == "pay_trc20":
         method = "trc20"
         caption = (
-            f"USDT TRC-20\nАдрес: {settings['trc20_addr']}\n\n"
+            f"USDT TRC-20\nАдрес: <code>{settings['trc20_addr']}</code>\n\n"
+            "Нажмите на адрес, чтобы скопировать.\n"
             "Отправьте скриншот оплаты фото или файл (например, PDF).\n"
             "Для отмены нажмите кнопку «Отмена» ниже."
         )
     elif data == "pay_card":
         method = "card"
         caption = (
-            f"Перевод по карте\nНомер: {settings['card_number']}\n\n"
-            "Отправьте скриншот оплаты фото или файл (например, PDF).\n"
+            f"Перевод по карте\nНомер: <code>{settings['card_number']}</code>\n\n"
+            "Нажмите на номер, чтобы скопировать.\n"
+            "Отправьте скриншот оплаты фото или файл с чеком (например, PDF).\n"
             "Для отмены нажмите кнопку «Отмена» ниже."
         )
 
@@ -913,7 +916,7 @@ async def process_payment_screenshot(message: types.Message, state: FSMContext, 
         db_session.add(pr)
         db_session.commit()
         await message.answer(
-            "Заявка на оплату отправлена на проверку. Администратор свяжется при подтверждении.",
+            "Заявка на оплату отправлена на проверку.",
             reply_markup=get_main_keyboard(is_admin=is_admin)
         )
     except Exception:
