@@ -8,7 +8,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db.models import User, Mode
-from proxy.utils import get_user_by_port, get_active_mode, get_scheduled_mode, modify_stratum_login
+from proxy.utils import get_user_by_port, get_active_mode, get_scheduled_mode
 from proxy.utils import modify_stratum_credentials
 
 logger = logging.getLogger(__name__)
