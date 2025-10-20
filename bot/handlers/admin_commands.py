@@ -374,11 +374,36 @@ async def process_pay_reject(callback: types.CallbackQuery):
         try:
             user = db_session.query(User).filter(User.id == pr.user_id).first()
             if user:
-                await callback.bot.send_message(chat_id=user.tg_id, text="❌ Оплата отклонена. Проверьте реквизиты и попробуйте снова через /pay.")
+                await callback.bot.send_message(chat_id=user.tg_id, text="❌ Ваша оплата отклонена. Проверьте данные и попробуйте снова.")
         except Exception:
             pass
     except Exception:
         await callback.message.answer("Ошибка отклонения заявки.")
+    finally:
+        await callback.answer()
+        db_session.close()
+
+# Новый обработчик: скрыть уведомление у админа
+async def process_pay_seen(callback: types.CallbackQuery):
+    from db.models import init_db, get_session, User, UserRole, PaymentRequest
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        admin = db_session.query(User).filter(User.tg_id == callback.from_user.id).first()
+        if not admin or admin.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+            await callback.answer("Нет прав", show_alert=True)
+            return
+        req_id = int(callback.data.split("_")[-1])
+        _ = db_session.query(PaymentRequest.id).filter(PaymentRequest.id == req_id).first()
+        # Удаляем уведомление из чата админа
+        try:
+            await callback.message.delete()
+        except Exception:
+            try:
+                await callback.message.edit_text(f"Заявка #{req_id} помечена как просмотренная.")
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
     finally:
         await callback.answer()
         db_session.close()
@@ -501,3 +526,4 @@ def register_admin_handlers(dp: Dispatcher, proxy_server=None):
     dp.callback_query.register(process_pay_view, F.data.startswith("pay_view_"))
     dp.callback_query.register(process_pay_approve, F.data.startswith("pay_approve_"))
     dp.callback_query.register(process_pay_reject, F.data.startswith("pay_reject_"))
+    dp.callback_query.register(process_pay_seen, F.data.startswith("pay_seen_"))

@@ -919,6 +919,29 @@ async def process_payment_screenshot(message: types.Message, state: FSMContext, 
             "Заявка на оплату отправлена на проверку.",
             reply_markup=get_main_keyboard(is_admin=is_admin)
         )
+        # Уведомление админам о новой заявке с кнопкой 'Просмотрено'
+        try:
+            admins = db_session.query(User).filter(User.role.in_([UserRole.ADMIN, UserRole.SUPERADMIN])).all()
+            if admins:
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+                info = (
+                    f"Новая заявка на оплату #{pr.id}\n"
+                    f"Пользователь: {user.username or user.tg_id} (tg_id={user.tg_id})\n"
+                    f"Метод: {pr.method.value}\n"
+                    f"Создано: {pr.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+                )
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="Смотреть файл/скрин", callback_data=f"pay_view_{pr.id}")],
+                    [InlineKeyboardButton(text="Одобрить", callback_data=f"pay_approve_{pr.id}"), InlineKeyboardButton(text="Отклонить", callback_data=f"pay_reject_{pr.id}")],
+                    [InlineKeyboardButton(text="Просмотрено", callback_data=f"pay_seen_{pr.id}")],
+                ])
+                for admin in admins:
+                    try:
+                        await message.bot.send_message(chat_id=admin.tg_id, text=info, reply_markup=kb)
+                    except Exception:
+                        pass
+        except Exception:
+            logger.warning("Не удалось отправить уведомления админам о новой заявке.")
     except Exception:
         await message.answer(
             "Не удалось сохранить заявку. Попробуйте позже или свяжитесь с администратором.",
