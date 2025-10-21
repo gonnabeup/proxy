@@ -5,6 +5,7 @@ import sys
 import os
 import json
 import binascii
+import ssl
 
 # Добавляем корневую директорию в путь для импорта
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -98,8 +99,16 @@ class StratumRouter:
         
         # Подключаемся к пулу
         try:
-            pool_reader, pool_writer = await asyncio.open_connection(mode.host, mode.port)
-            logger.info(f"Подключено к пулу {mode.host}:{mode.port} для пользователя {user.username}")
+            use_tls = int(mode.port or 0) in (443, 3334, 4444)
+            if use_tls:
+                ssl_ctx = ssl.create_default_context()
+                pool_reader, pool_writer = await asyncio.open_connection(
+                    mode.host, mode.port, ssl=ssl_ctx, server_hostname=mode.host
+                )
+                logger.info(f"Подключено к пулу {mode.host}:{mode.port} (TLS) для пользователя {user.username}")
+            else:
+                pool_reader, pool_writer = await asyncio.open_connection(mode.host, mode.port)
+                logger.info(f"Подключено к пулу {mode.host}:{mode.port} для пользователя {user.username}")
             logger.info(f"Параметры режима: login='{user.login}', alias='{mode.alias}', user_port={client_port}, pool={mode.host}:{mode.port}")
             
             # Сохраняем информацию о соединении
@@ -208,7 +217,8 @@ class StratumRouter:
                                         logger.info(
                                             f"Подмена кредов выполнена: login='{login}' alias='{alias}'"
                                         )
-                                    data = modified_text.encode('utf-8') + b"\n"
+                                    nl = b"\r\n" if data.endswith(b"\r\n") else (b"\n" if data.endswith(b"\n") else b"\n")
+                                    data = modified_text.encode('utf-8') + nl
                                 except Exception as ex:
                                     logger.warning(f"Ошибка при попытке подмены кредов: {ex}")
                                     # Оставляем оригинальные байты
