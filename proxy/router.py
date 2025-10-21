@@ -160,7 +160,8 @@ class StratumRouter:
         tls_warned = False
         try:
             while not reader.at_eof():
-                data = await reader.read(8192)
+                # Читаем построчно, чтобы не дробить Stratum-JSON
+                data = await reader.readline()
                 if not data:
                     break
                 
@@ -207,7 +208,7 @@ class StratumRouter:
                                         logger.info(
                                             f"Подмена кредов выполнена: login='{login}' alias='{alias}'"
                                         )
-                                    data = modified_text.encode('utf-8')
+                                    data = modified_text.encode('utf-8') + b"\n"
                                 except Exception as ex:
                                     logger.warning(f"Ошибка при попытке подмены кредов: {ex}")
                                     # Оставляем оригинальные байты

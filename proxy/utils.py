@@ -86,8 +86,8 @@ def is_time_in_range(current_time, start_time, end_time):
 
 def modify_stratum_credentials(data, user_login, alias):
     """Модифицирует JSON-данные Stratum:
-    - mining.authorize: устанавливает alias (если alias есть), иначе login
-    - mining.submit: устанавливает worker = alias
+    - mining.authorize: заменяет левую часть логина на alias, сохраняя суффикс воркера (например, 13v5a.gc1 → niko8russian.gc1)
+    - mining.submit: не изменяет worker; только логирует его текущее значение
     Поддерживает NDJSON (несколько JSON-объектов в одном буфере) и BOM.
     Добавлено подробное логирование изменений параметров.
     """
