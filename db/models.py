@@ -98,7 +98,14 @@ def init_db(db_url=None):
         except Exception:
             # Фолбэк на локальную SQLite, если настройки недоступны
             db_url = "sqlite:///stratum_proxy.db"
-    engine = create_engine(db_url)
+    engine = create_engine(
+        db_url,
+        pool_size=20,
+        max_overflow=40,
+        pool_timeout=30,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+    )
     Base.metadata.create_all(engine)
     return engine
 

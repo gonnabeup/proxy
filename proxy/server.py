@@ -25,6 +25,9 @@ class StratumProxyServer:
         self._engine = init_db()
         self._servers: Dict[int, asyncio.AbstractServer] = {}
         self._clients: Dict[int, Set[asyncio.Task]] = {}
+        # Учёт занятых воркеров по порту: базовая строка alias[.worker] -> счётчик
+        self._active_workers: Dict[int, Dict[asyncio.Task, str]] = {}
+        self._worker_counts: Dict[int, Dict[str, int]] = {}
         self._lock = asyncio.Lock()
 
     async def start(self):
@@ -103,6 +106,9 @@ class StratumProxyServer:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except Exception:
                 pass
+        # Очистить учёт воркеров
+        self._active_workers.pop(port, None)
+        self._worker_counts.pop(port, None)
         logger.info(f"Порт {port} остановлен")
 
     async def _handle_client(self, miner_reader: asyncio.StreamReader, miner_writer: asyncio.StreamWriter, port: int):
@@ -139,6 +145,7 @@ class StratumProxyServer:
 
             host = active_mode.host
             upstream_port = active_mode.port
+            alias_login = active_mode.alias
             logger.info(f"Майнер {addr}: подключаем к пулу {host}:{upstream_port} (mode={active_mode.name})")
         finally:
             session.close()
@@ -157,8 +164,6 @@ class StratumProxyServer:
             return
 
         async def forward_to_pool():
-            # На каждый апстрим нужен свежий DB-сессия для чтения актуального режима (на случай быстрого переключения)
-            local_session = get_session(self._engine)
             try:
                 while not miner_reader.at_eof():
                     data = await miner_reader.readline()
@@ -178,13 +183,8 @@ class StratumProxyServer:
                     method = msg.get("method")
                     if method == "mining.authorize":
                         params = msg.get("params", [])
-                        # Получаем актуальные значения, так как режим мог смениться перед перезагрузкой
-                        try:
-                            user = local_session.query(User).filter(User.port == port).first()
-                            active_mode = local_session.query(Mode).filter(Mode.user_id == user.id, Mode.is_active == 1).first() if user else None
-                        except Exception:
-                            active_mode = None
-                        alias_login = active_mode.alias if active_mode else None
+                        # Используем alias_login из активного режима, полученного при подключении
+                        # Режимы обновляются через reload_port, который перезапускает сервер
 
                         if params and isinstance(params[0], str) and alias_login:
                             original = params[0]
@@ -192,8 +192,35 @@ class StratumProxyServer:
                                 miner_login, worker = original.split(".", 1)
                             else:
                                 miner_login, worker = original, ""
-                            # Переписываем логин на логин/кошелёк пула, воркер сохраняем
-                            new_user = f"{alias_login}.{worker}" if worker else alias_login
+
+                            # Базовое желаемое имя (без уникализации)
+                            base_desired = f"{alias_login}.{worker}" if worker else alias_login
+
+                            # Учёт уникальности воркеров на порту
+                            counts = self._worker_counts.setdefault(port, {})
+                            active_map = self._active_workers.setdefault(port, {})
+                            prev_base = active_map.get(client_task)
+                            if prev_base and prev_base != base_desired:
+                                # клиент сменил воркера — скорректируем счётчики
+                                prev_count = counts.get(prev_base, 0)
+                                if prev_count > 1:
+                                    counts[prev_base] = prev_count - 1
+                                elif prev_count == 1:
+                                    counts.pop(prev_base, None)
+
+                            usage = counts.get(base_desired, 0) + 1
+                            counts[base_desired] = usage
+                            active_map[client_task] = base_desired
+
+                            if usage == 1:
+                                new_user = base_desired
+                            else:
+                                # Добавляем суффикс -2, -3... чтобы пул не разрывал первое соединение
+                                if worker:
+                                    new_user = f"{alias_login}.{worker}-{usage}"
+                                else:
+                                    new_user = f"{alias_login}-{usage}"
+
                             msg["params"][0] = new_user
                             data = (json.dumps(msg) + "\n").encode()
                             logger.info(f"Порт {port}: authorize {original} -> {new_user}")
@@ -210,6 +237,8 @@ class StratumProxyServer:
                     await pool_writer.drain()
             except asyncio.CancelledError:
                 pass
+            except (ConnectionResetError, BrokenPipeError):
+                logger.info(f"Пул закрыл соединение для {addr} на порту {port}")
             except Exception as e:
                 logger.error(f"Ошибка форвардинга к пулу для {addr}: {e}")
             finally:
@@ -225,6 +254,17 @@ class StratumProxyServer:
                     data = await pool_reader.readline()
                     if not data:
                         break
+                    # Попробуем вытащить ошибку из ответа пула для диагностики
+                    try:
+                        resp_text = data.decode(errors='ignore').strip()
+                        if resp_text:
+                            resp = json.loads(resp_text)
+                            err = resp.get("error")
+                            if err:
+                                logger.warning(f"Ответ пула с ошибкой для {addr} на порту {port}: {err}")
+                    except Exception:
+                        pass
+
                     miner_writer.write(data)
                     await miner_writer.drain()
             except asyncio.CancelledError:
@@ -242,4 +282,15 @@ class StratumProxyServer:
             await asyncio.gather(forward_to_pool(), forward_to_miner())
         finally:
             self._clients.get(port, set()).discard(client_task)
+            # Корректировка счётчиков воркеров на порту
+            active_map = self._active_workers.get(port)
+            counts = self._worker_counts.get(port)
+            if active_map is not None and counts is not None:
+                base = active_map.pop(client_task, None)
+                if base:
+                    c = counts.get(base, 0)
+                    if c > 1:
+                        counts[base] = c - 1
+                    elif c == 1:
+                        counts.pop(base, None)
             logger.info(f"Соединение закрыто для {addr} на порту {port}")
