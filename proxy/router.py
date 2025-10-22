@@ -133,16 +133,14 @@ class StratumRouter:
                 self._proxy_data(pool_reader, writer, None, None, 'pool->client')
             )
             
-            # Ждем завершения любой из задач
-            done, pending = await asyncio.wait(
-                [client_to_pool_task, pool_to_client_task],
-                return_when=asyncio.FIRST_COMPLETED
-            )
+            # Ожидаем завершения обеих задач, чтобы не закрывать соединение преждевременно
+            try:
+                await asyncio.gather(client_to_pool_task, pool_to_client_task)
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"Ошибка во время проксирования: {e}")
             
-            # Отменяем оставшуюся задачу
-            for task in pending:
-                task.cancel()
-                
             # Закрываем соединения
             writer.close()
             pool_writer.close()
