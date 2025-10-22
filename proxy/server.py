@@ -7,17 +7,17 @@ import os
 # Добавляем корневую директорию в путь для импорта
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.settings import PROXY_HOST
+from config.settings import PROXY_HOST, LOG_DIR, LOG_LEVEL, SCHEDULER_CHECK_INTERVAL
 from db.models import init_db, get_session, User
 from proxy.router import StratumRouter
 
 # Настройка логирования
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('logs/proxy_server.log')
+        logging.FileHandler(str(LOG_DIR / 'proxy_server.log'))
     ]
 )
 logger = logging.getLogger(__name__)
@@ -32,39 +32,48 @@ class StratumProxyServer:
         self.router = StratumRouter(self.db_session)
         self.servers = {}  # Словарь для хранения серверов по портам
         self.running = False
+        self.schedule_task = None
 
     async def _start_server_for_user(self, user: User):
         """Запуск сервера для конкретного пользователя"""
         port = user.port
         host = PROXY_HOST
-        server = await asyncio.start_server(
-            lambda r, w: self.router.handle_client(r, w, port),
-            host,
-            port
-        )
-        self.servers[port] = server
-        logger.info(f"Сервер запущен для пользователя {user.username} на порту {port}")
+        try:
+            server = await asyncio.start_server(
+                lambda r, w: self.router.handle_client(r, w, port),
+                host,
+                port
+            )
+            self.servers[port] = server
+            logger.info(f"Сервер запущен для пользователя {user.username} на порту {port}")
+        except Exception as e:
+            logger.error(f"Не удалось запустить сервер для пользователя {user.username} на порту {port}: {e}")
 
     async def start(self):
         """Запуск прокси-сервера"""
         self.running = True
         
-        # Получаем всех пользователей с активной подпиской
-        users = self.db_session.query(User).all()
+        # Получаем всех пользователей с активной подпиской и валидным портом
+        users = [u for u in self.db_session.query(User).all() if u.port and u.is_subscription_active()]
         
         if not users:
-            logger.warning("Нет пользователей в базе данных")
+            logger.warning("Нет активных пользователей в базе данных")
             return
         
         # Создаем серверы для каждого порта пользователя
         for user in users:
             await self._start_server_for_user(user)
         
-        # Настраиваем обработчики сигналов для корректного завершения
+        # Настраиваем обработчики сигналов для корректного завершения (безопасно для Windows)
+        loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
-            asyncio.get_event_loop().add_signal_handler(
-                sig, lambda: asyncio.create_task(self.stop())
-            )
+            try:
+                loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
+            except (NotImplementedError, RuntimeError):
+                logger.debug("Обработчики сигналов недоступны на этой платформе; используем KeyboardInterrupt")
+        
+        # Запускаем фоновые проверки расписаний режимов
+        self.schedule_task = asyncio.create_task(self._schedule_loop())
         
         logger.info("Stratum-прокси сервер запущен и готов к работе")
 
@@ -75,6 +84,15 @@ class StratumProxyServer:
         
         self.running = False
         logger.info("Останавливаем Stratum-прокси сервер...")
+        
+        # Останавливаем фоновые задачи
+        if self.schedule_task:
+            self.schedule_task.cancel()
+            try:
+                await self.schedule_task
+            except asyncio.CancelledError:
+                pass
+            self.schedule_task = None
         
         # Закрываем все соединения
         self.router.close_all_connections()
@@ -111,6 +129,15 @@ class StratumProxyServer:
         await self.start()
         
         logger.info("Порты перезагружены")
+
+    async def _schedule_loop(self):
+        """Фоновая проверка расписаний и активация режимов"""
+        while self.running:
+            try:
+                await self.router.update_active_modes_by_schedule()
+            except Exception as e:
+                logger.error(f"Ошибка обновления режимов по расписанию: {e}")
+            await asyncio.sleep(SCHEDULER_CHECK_INTERVAL)
 
 async def main():
     """Основная функция для запуска сервера"""
