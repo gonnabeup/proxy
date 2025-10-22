@@ -133,19 +133,19 @@ class StratumRouter:
                 self._proxy_data(pool_reader, writer, None, None, 'pool->client')
             )
             
-            # Ожидаем завершения обеих задач, чтобы не закрывать соединение преждевременно
+            # Ждем завершения обеих задач, чтобы не ронять рукопожатие преждевременно
             try:
                 await asyncio.gather(client_to_pool_task, pool_to_client_task)
-            except asyncio.CancelledError:
-                pass
             except Exception as e:
-                logger.error(f"Ошибка во время проксирования: {e}")
-            
-            # Закрываем соединения
-            writer.close()
-            pool_writer.close()
-            await writer.wait_closed()
-            await pool_writer.wait_closed()
+                logger.error(f"Исключение при проксировании для {user.username}: {e}")
+            finally:
+                try:
+                    writer.close()
+                    pool_writer.close()
+                    await writer.wait_closed()
+                    await pool_writer.wait_closed()
+                except Exception as close_ex:
+                    logger.debug(f"Ошибка при закрытии сокетов: {close_ex}")
             
             # Удаляем информацию о соединении
             if client_addr in self.connections:
@@ -266,8 +266,8 @@ class StratumRouter:
                                         method = obj.get('method')
                                         if method:
                                             logger.info(f"Ответ пула: {method}")
-                                        elif 'result' in obj:
-                                            logger.info("Ответ пула: result")
+                                        elif 'result' in obj or 'error' in obj:
+                                            logger.info(f"Ответ пула: result={obj.get('result')}, error={obj.get('error')}")
                                     except Exception:
                                         pass
                     except Exception:
