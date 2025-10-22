@@ -20,6 +20,8 @@ class StratumRouter:
     def __init__(self, db_session: Session):
         self.db_session = db_session
         self.connections = {}  # Словарь для хранения активных соединений
+        # Трекинг authorise по соединению: {conn_key: {id: <int|str>, ts: <float>}}
+        self.auth_state = {}
 
     async def update_active_modes_by_schedule(self):
         """Обновление активных режимов пользователей согласно их расписаниям.
@@ -126,11 +128,11 @@ class StratumRouter:
             
             # Запускаем две задачи для проксирования данных в обе стороны
             client_to_pool_task = asyncio.create_task(
-                self._proxy_data(reader, pool_writer, user.login, mode.alias, 'client->pool')
+                self._proxy_data(reader, pool_writer, user.login, mode.alias, 'client->pool', conn_key=client_addr)
             )
             
             pool_to_client_task = asyncio.create_task(
-                self._proxy_data(pool_reader, writer, None, None, 'pool->client')
+                self._proxy_data(pool_reader, writer, None, None, 'pool->client', conn_key=client_addr)
             )
             
             # Ждем завершения обеих задач, чтобы не ронять рукопожатие преждевременно
@@ -162,7 +164,7 @@ class StratumRouter:
                 writer.close()
                 await writer.wait_closed()
 
-    async def _proxy_data(self, reader, writer, login, alias, direction):
+    async def _proxy_data(self, reader, writer, login, alias, direction, conn_key=None):
         """Проксирование данных между клиентом и пулом"""
         tls_warned = False
         first_chunk = True
@@ -237,6 +239,17 @@ class StratumRouter:
                                         p0 = params[0] if isinstance(params, list) and params else None
                                         if method:
                                             logger.info(f"Стратум-запрос: {method}, params[0]={p0}")
+                                        # Зафиксируем отправку authorize, чтобы сопоставить ответ
+                                        if method == 'mining.authorize' and conn_key is not None:
+                                            auth_id = obj.get('id')
+                                            try:
+                                                self.auth_state[conn_key] = {
+                                                    'id': auth_id,
+                                                    'ts': asyncio.get_running_loop().time()
+                                                }
+                                                logger.debug(f"Authorize отправлен: id={auth_id}, conn={conn_key}")
+                                            except Exception:
+                                                pass
                                     except Exception:
                                         pass
                                 try:
@@ -268,6 +281,13 @@ class StratumRouter:
                                             logger.info(f"Ответ пула: {method}")
                                         elif 'result' in obj or 'error' in obj:
                                             logger.info(f"Ответ пула: result={obj.get('result')}, error={obj.get('error')}")
+                                        # Сопоставим ответ на authorize, если мы его ожидали
+                                        if conn_key is not None and conn_key in self.auth_state:
+                                            auth_id = self.auth_state[conn_key].get('id')
+                                            if obj.get('id') == auth_id and ('result' in obj or 'error' in obj):
+                                                logger.info(f"Authorize ответ: id={auth_id}, result={obj.get('result')}, error={obj.get('error')}")
+                                                # Сбросим состояние, чтобы не дублировать
+                                                self.auth_state.pop(conn_key, None)
                                     except Exception:
                                         pass
                     except Exception:
@@ -281,6 +301,14 @@ class StratumRouter:
             pass
         except Exception as e:
             logger.error(f"Ошибка при проксировании данных ({direction}): {e}")
+        finally:
+            # Если соединение закрыто и висело ожидание authorize — отметим таймаут
+            try:
+                if conn_key is not None and conn_key in self.auth_state:
+                    st = self.auth_state.pop(conn_key, None)
+                    logger.warning(f"Authorize timeout/закрытие без ответа: id={st.get('id') if st else None}, conn={conn_key}")
+            except Exception:
+                pass
     
     def close_all_connections(self):
         """Закрытие всех активных соединений"""
