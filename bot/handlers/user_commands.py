@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from datetime import datetime
+import aiohttp
 from aiogram import Dispatcher, types, F
  
 from aiogram.fsm.context import FSMContext
@@ -785,14 +786,37 @@ def _payment_settings():
             "card_number": "",
         }
 
+async def _get_usd_to_rub_rate() -> float | None:
+    """Получить текущий курс USD→RUB. Возвращает None при ошибке."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get("https://api.exchangerate.host/latest?base=USD&symbols=RUB") as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                rate = data.get("rates", {}).get("RUB")
+                if isinstance(rate, (int, float)):
+                    return float(rate)
+    except Exception:
+        logger.warning("Не удалось получить курс USD/RUB", exc_info=False)
+    return None
+
 async def cmd_pay(message: types.Message, state: FSMContext):
     # Если уже в процессе оплаты, запрещаем повторный выбор
     current_state = await state.get_state()
     if current_state == PaymentState.waiting_for_screenshot.state:
         await message.answer("Вы уже выбрали способ оплаты. Отправьте фото/файл или нажмите «Отмена».")
         return
+    price_usd = 12
+    rub_text = ""
+    rate = await _get_usd_to_rub_rate()
+    if rate:
+        rub_value = round(price_usd * rate, 2)
+        rub_text = f" (≈ ₽{rub_value:.2f} по текущему курсу)"
     text = (
-        "Выберите способ оплаты подписки:\n\n"
+        f"Выберите способ оплаты подписки:\n\n"
+        f"Стоимость подписки: $ {price_usd}{rub_text}\n\n"
         "— USDT BEP-20\n"
         "— USDT TRC-20\n"
         "— Перевод по номеру карты"
@@ -802,7 +826,16 @@ async def cmd_pay(message: types.Message, state: FSMContext):
 
 async def process_pay_open(callback: types.CallbackQuery):
     from bot.keyboards import get_pay_methods_keyboard
-    await callback.message.answer("Выберите способ оплаты:", reply_markup=get_pay_methods_keyboard())
+    price_usd = 12
+    rub_text = ""
+    rate = await _get_usd_to_rub_rate()
+    if rate:
+        rub_value = round(price_usd * rate, 2)
+        rub_text = f" (≈ ₽{rub_value:.2f} по текущему курсу)"
+    await callback.message.answer(
+        f"Выберите способ оплаты:\n\nСтоимость подписки: $ {price_usd}{rub_text}",
+        reply_markup=get_pay_methods_keyboard()
+    )
     await callback.answer()
 
 async def process_pay_method(callback: types.CallbackQuery, state: FSMContext):

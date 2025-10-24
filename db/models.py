@@ -93,18 +93,30 @@ def init_db(db_url=None):
     # Если URL базы не передан, используем значение из настроек
     if db_url is None:
         try:
-            from config.settings import DATABASE_URL
+            from config.settings import (
+                DATABASE_URL,
+                DB_POOL_SIZE,
+                DB_MAX_OVERFLOW,
+                DB_POOL_TIMEOUT,
+                DB_POOL_RECYCLE,
+                DB_POOL_PRE_PING,
+            )
             db_url = DATABASE_URL
         except Exception:
             # Фолбэк на локальную SQLite, если настройки недоступны
             db_url = "sqlite:///stratum_proxy.db"
+            DB_POOL_SIZE = 200
+            DB_MAX_OVERFLOW = 400
+            DB_POOL_TIMEOUT = 60
+            DB_POOL_RECYCLE = 1800
+            DB_POOL_PRE_PING = True
     engine = create_engine(
         db_url,
-        pool_size=20,
-        max_overflow=40,
-        pool_timeout=30,
-        pool_pre_ping=True,
-        pool_recycle=1800,
+        pool_size=DB_POOL_SIZE,
+        max_overflow=DB_MAX_OVERFLOW,
+        pool_timeout=DB_POOL_TIMEOUT,
+        pool_pre_ping=DB_POOL_PRE_PING,
+        pool_recycle=DB_POOL_RECYCLE,
     )
     Base.metadata.create_all(engine)
     return engine

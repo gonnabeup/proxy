@@ -28,6 +28,7 @@ class StratumProxyServer:
         # Учёт занятых воркеров по порту: базовая строка alias[.worker] -> счётчик
         self._active_workers: Dict[int, Dict[asyncio.Task, str]] = {}
         self._worker_counts: Dict[int, Dict[str, int]] = {}
+        self._port_mode: Dict[int, dict] = {}
         self._lock = asyncio.Lock()
 
     async def start(self):
@@ -69,6 +70,23 @@ class StratumProxyServer:
             if not user:
                 logger.warning(f"Пользователь для порта {port} не найден. Пропускаю запуск.")
                 return
+            active_mode: Optional[Mode] = session.query(Mode).filter(Mode.user_id == user.id, Mode.is_active == 1).first()
+            if active_mode:
+                self._port_mode[port] = {
+                    "host": active_mode.host,
+                    "port": active_mode.port,
+                    "alias": active_mode.alias,
+                    "mode_name": active_mode.name,
+                    "login": user.login,
+                }
+            else:
+                self._port_mode[port] = {
+                    "host": "sleep",
+                    "port": 0,
+                    "alias": "",
+                    "mode_name": "sleep",
+                    "login": user.login,
+                }
         finally:
             session.close()
 
@@ -109,6 +127,7 @@ class StratumProxyServer:
         # Очистить учёт воркеров
         self._active_workers.pop(port, None)
         self._worker_counts.pop(port, None)
+        self._port_mode.pop(port, None)
         logger.info(f"Порт {port} остановлен")
 
     async def _handle_client(self, miner_reader: asyncio.StreamReader, miner_writer: asyncio.StreamWriter, port: int):
@@ -117,38 +136,25 @@ class StratumProxyServer:
         self._clients.setdefault(port, set()).add(client_task)
         logger.info(f"Подключен майнер {addr} -> порт {port}")
 
-        # Получаем пользователя и его активный режим
-        session = get_session(self._engine)
-        try:
-            user = session.query(User).filter(User.port == port).first()
-            if not user:
-                logger.warning(f"Майнер {addr}: пользователь для порта {port} не найден. Закрываю.")
-                miner_writer.close()
-                await miner_writer.wait_closed()
-                self._clients.get(port, set()).discard(client_task)
-                return
+        # Получаем активный режим из кеша порта (без запросов к БД)
+        cached = self._port_mode.get(port)
+        if not cached or cached.get("mode_name") == "sleep" or not cached.get("host") or int(cached.get("port", 0)) == 0:
+            logger.info(f"Майнер {addr}: активный режим 'sleep' для пользователя порт {port}. Закрываю соединение.")
+            try:
+                msg = {"id": None, "result": None, "error": {"code": -1, "message": "proxy sleep"}}
+                miner_writer.write((json.dumps(msg) + "\n").encode())
+                await miner_writer.drain()
+            except Exception:
+                pass
+            miner_writer.close()
+            await miner_writer.wait_closed()
+            self._clients.get(port, set()).discard(client_task)
+            return
 
-            active_mode: Optional[Mode] = session.query(Mode).filter(Mode.user_id == user.id, Mode.is_active == 1).first()
-            if not active_mode or active_mode.host.lower() in ("sleep", "сон") or active_mode.port == 0:
-                logger.info(f"Майнер {addr}: активный режим 'sleep' для пользователя порт {port}. Закрываю соединение.")
-                try:
-                    # Нежно уведомим, если клиент ожидает JSON, но не обязательно
-                    msg = {"id": None, "result": None, "error": {"code": -1, "message": "proxy sleep"}}
-                    miner_writer.write((json.dumps(msg) + "\n").encode())
-                    await miner_writer.drain()
-                except Exception:
-                    pass
-                miner_writer.close()
-                await miner_writer.wait_closed()
-                self._clients.get(port, set()).discard(client_task)
-                return
-
-            host = active_mode.host
-            upstream_port = active_mode.port
-            alias_login = active_mode.alias
-            logger.info(f"Майнер {addr}: подключаем к пулу {host}:{upstream_port} (mode={active_mode.name})")
-        finally:
-            session.close()
+        host = cached.get("host")
+        upstream_port = int(cached.get("port"))
+        alias_login = cached.get("alias", "")
+        logger.info(f"Майнер {addr}: подключаем к пулу {host}:{upstream_port} (mode={cached.get('mode_name')})")
 
         # Подключаемся к пулу
         try:
@@ -162,6 +168,9 @@ class StratumProxyServer:
                 pass
             self._clients.get(port, set()).discard(client_task)
             return
+
+        # Счётчики ошибок пула на время данного соединения
+        error_counts = {}
 
         async def forward_to_pool():
             try:
@@ -254,14 +263,29 @@ class StratumProxyServer:
                     data = await pool_reader.readline()
                     if not data:
                         break
-                    # Попробуем вытащить ошибку из ответа пула для диагностики
+                    # Диагностика ответов пула: отличаем нормальные ошибки (stale/unknown) от проблемных
                     try:
                         resp_text = data.decode(errors='ignore').strip()
                         if resp_text:
                             resp = json.loads(resp_text)
                             err = resp.get("error")
-                            if err:
-                                logger.warning(f"Ответ пула с ошибкой для {addr} на порту {port}: {err}")
+                            if err is not None:
+                                # Stratum обычно возвращает [code, message, data]
+                                code = None
+                                message = None
+                                if isinstance(err, list) and len(err) >= 2:
+                                    code, message = err[0], err[1]
+                                elif isinstance(err, dict):
+                                    code = err.get("code")
+                                    message = err.get("message")
+                                m = str(message) if message is not None else str(err)
+                                if m in ("stale-work", "unknown-work"):
+                                    logger.info(f"Ответ пула: {m} для {addr} на порту {port} (code={code})")
+                                else:
+                                    logger.warning(f"Ответ пула с ошибкой для {addr} на порту {port}: {err}")
+                                # Счётчики на соединение
+                                key = m or "error"
+                                error_counts[key] = error_counts.get(key, 0) + 1
                     except Exception:
                         pass
 
@@ -293,4 +317,11 @@ class StratumProxyServer:
                         counts[base] = c - 1
                     elif c == 1:
                         counts.pop(base, None)
+            # Итоговая статистика ошибок пула по данному соединению
+            if error_counts:
+                try:
+                    summary = ", ".join(f"{k}={v}" for k, v in error_counts.items())
+                    logger.info(f"Итог по ошибкам пула для {addr} на порту {port}: {summary}")
+                except Exception:
+                    pass
             logger.info(f"Соединение закрыто для {addr} на порту {port}")

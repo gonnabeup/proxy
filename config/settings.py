@@ -30,3 +30,8 @@ if not LOG_DIR.exists():
 WALLET_BEP20_ADDRESS = os.getenv('WALLET_BEP20_ADDRESS', '')
 WALLET_TRC20_ADDRESS = os.getenv('WALLET_TRC20_ADDRESS', '')
 CARD_NUMBER = os.getenv('CARD_NUMBER', '')
+DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', '200'))
+DB_MAX_OVERFLOW = int(os.getenv('DB_MAX_OVERFLOW', '400'))
+DB_POOL_TIMEOUT = int(os.getenv('DB_POOL_TIMEOUT', '60'))
+DB_POOL_RECYCLE = int(os.getenv('DB_POOL_RECYCLE', '1800'))
+DB_POOL_PRE_PING = os.getenv('DB_POOL_PRE_PING', '1').lower() in ('1', 'true', 'yes')
