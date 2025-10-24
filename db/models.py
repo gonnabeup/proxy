@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, create_engine, Enum
+from sqlalchemy import Column, Integer, BigInteger, String, ForeignKey, DateTime, create_engine, Enum
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 import datetime
@@ -16,7 +16,7 @@ class User(Base):
     __tablename__ = 'users'
     
     id = Column(Integer, primary_key=True)
-    tg_id = Column(Integer, unique=True, nullable=False)
+    tg_id = Column(BigInteger, unique=True, nullable=False)
     username = Column(String, nullable=True)
     role = Column(Enum(UserRole), default=UserRole.USER)
     port = Column(Integer, unique=True, nullable=False)
