@@ -2,6 +2,7 @@ import logging
 import asyncio
 from datetime import datetime
 import aiohttp
+import xml.etree.ElementTree as ET
 from aiogram import Dispatcher, types, F
  
 from aiogram.fsm.context import FSMContext
@@ -786,21 +787,38 @@ def _payment_settings():
             "card_number": "",
         }
 
-async def _get_usd_to_rub_rate() -> float | None:
-    """Получить текущий курс USD→RUB. Возвращает None при ошибке."""
+async def _get_usd_to_rub_rate() -> float:
+    """Получить текущий курс USD→RUB с сайта ЦБ РФ. Всегда возвращает число (с запасным курсом)."""
     try:
         timeout = aiohttp.ClientTimeout(total=5)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get("https://api.exchangerate.host/latest?base=USD&symbols=RUB") as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-                rate = data.get("rates", {}).get("RUB")
-                if isinstance(rate, (int, float)):
-                    return float(rate)
+            async with session.get("https://www.cbr.ru/scripts/XML_daily.asp") as resp:
+                if resp.status == 200:
+                    text = await resp.text(encoding='windows-1251')
+                    root = ET.fromstring(text)
+                    for valute in root.findall("Valute"):
+                        char_code = (valute.findtext("CharCode") or "").upper()
+                        if char_code == "USD":
+                            nominal_text = valute.findtext("Nominal") or "1"
+                            value_text = valute.findtext("Value") or ""
+                            try:
+                                nominal = int(nominal_text.strip() or "1")
+                            except Exception:
+                                nominal = 1
+                            try:
+                                value = float(value_text.replace(",", ".").strip())
+                            except Exception:
+                                break
+                            # Курс за 1 единицу валюты
+                            return value / max(nominal, 1)
     except Exception:
-        logger.warning("Не удалось получить курс USD/RUB", exc_info=False)
-    return None
+        logger.warning("Не удалось получить курс USD/RUB с ЦБ РФ", exc_info=False)
+    # Фолбек на ручной курс из настроек
+    try:
+        from config.settings import USD_RUB_FALLBACK
+        return float(USD_RUB_FALLBACK)
+    except Exception:
+        return 100.0
 
 async def cmd_pay(message: types.Message, state: FSMContext):
     # Если уже в процессе оплаты, запрещаем повторный выбор
@@ -809,11 +827,9 @@ async def cmd_pay(message: types.Message, state: FSMContext):
         await message.answer("Вы уже выбрали способ оплаты. Отправьте фото/файл или нажмите «Отмена».")
         return
     price_usd = 12
-    rub_text = ""
     rate = await _get_usd_to_rub_rate()
-    if rate:
-        rub_value = round(price_usd * rate, 2)
-        rub_text = f" (≈ ₽{rub_value:.2f} по текущему курсу)"
+    rub_value = round(price_usd * rate, 2)
+    rub_text = f" (≈ ₽{rub_value:.2f} по курсу ЦБ РФ)"
     text = (
         f"Выберите способ оплаты подписки:\n\n"
         f"Стоимость подписки: $ {price_usd}{rub_text}\n\n"
@@ -827,11 +843,9 @@ async def cmd_pay(message: types.Message, state: FSMContext):
 async def process_pay_open(callback: types.CallbackQuery):
     from bot.keyboards import get_pay_methods_keyboard
     price_usd = 12
-    rub_text = ""
     rate = await _get_usd_to_rub_rate()
-    if rate:
-        rub_value = round(price_usd * rate, 2)
-        rub_text = f" (≈ ₽{rub_value:.2f} по текущему курсу)"
+    rub_value = round(price_usd * rate, 2)
+    rub_text = f" (≈ ₽{rub_value:.2f} по курсу ЦБ РФ)"
     await callback.message.answer(
         f"Выберите способ оплаты:\n\nСтоимость подписки: $ {price_usd}{rub_text}",
         reply_markup=get_pay_methods_keyboard()

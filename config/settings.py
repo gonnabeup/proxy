@@ -30,6 +30,10 @@ if not LOG_DIR.exists():
 WALLET_BEP20_ADDRESS = os.getenv('WALLET_BEP20_ADDRESS', '')
 WALLET_TRC20_ADDRESS = os.getenv('WALLET_TRC20_ADDRESS', '')
 CARD_NUMBER = os.getenv('CARD_NUMBER', '')
+# Фолбек для курса USD→RUB, если API недоступен
+USD_RUB_FALLBACK = float(os.getenv('USD_RUB_FALLBACK', '100'))
+
+# Настройки пула соединений БД
 DB_POOL_SIZE = int(os.getenv('DB_POOL_SIZE', '200'))
 DB_MAX_OVERFLOW = int(os.getenv('DB_MAX_OVERFLOW', '400'))
 DB_POOL_TIMEOUT = int(os.getenv('DB_POOL_TIMEOUT', '60'))
