@@ -5,7 +5,9 @@ import datetime
 import re
 from typing import Dict, Set, Optional
 
-from config.settings import PROXY_HOST
+from aiogram import Bot
+from aiogram.enums import ParseMode
+from config.settings import PROXY_HOST, BOT_TOKEN
 from db.models import init_db, get_session, User, Mode, Device
 
 logger = logging.getLogger(__name__)
@@ -367,6 +369,17 @@ class StratumProxyServer:
                                     dev.is_online = 0
                                     dev.last_seen_at = datetime.datetime.utcnow()
                                     session.commit()
+                                    # Попробуем отправить уведомление пользователю о отключении устройства
+                                    try:
+                                        if BOT_TOKEN and getattr(u, "tg_id", None):
+                                            bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+                                            name = dev.name or dev.worker or "Аппарат"
+                                            worker_info = f" ({dev.worker})" if dev.worker else ""
+                                            text = f"❗️ {name}{worker_info} стал оффлайн."
+                                            await bot.send_message(chat_id=u.tg_id, text=text)
+                                            await bot.session.close()
+                                    except Exception as e:
+                                        logger.warning(f"Ошибка отправки уведомления об оффлайне: {e}")
                             session.close()
                         except Exception as e:
                             logger.warning(f"Не удалось отметить оффлайн Device для порта {port}: {e}")
