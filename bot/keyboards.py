@@ -5,7 +5,8 @@ def get_cancel_keyboard():
     """Клавиатура с кнопкой отмены"""
     builder = ReplyKeyboardBuilder()
     builder.add(KeyboardButton(text="Отмена"))
-    return builder.as_markup(resize_keyboard=True, one_time_keyboard=False)
+    # Один раз показать, затем скрыть после нажатия
+    return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 def get_yes_no_keyboard():
     """Клавиатура с кнопками Да/Нет"""
