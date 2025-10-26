@@ -1,10 +1,12 @@
 import asyncio
 import json
 import logging
+import datetime
+import re
 from typing import Dict, Set, Optional
 
 from config.settings import PROXY_HOST
-from db.models import init_db, get_session, User, Mode
+from db.models import init_db, get_session, User, Mode, Device
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +235,41 @@ class StratumProxyServer:
                             msg["params"][0] = new_user
                             data = (json.dumps(msg) + "\n").encode()
                             logger.info(f"Порт {port}: authorize {original} -> {new_user}")
+
+                            # === Апсерть устройства в БД ===
+                            try:
+                                session = get_session(self._engine)
+                                u = session.query(User).filter(User.port == port).first()
+                                if u:
+                                    worker_key = worker or ""
+                                    # имя устройства по умолчанию — воркер
+                                    name_val = worker_key or None
+                                    # попытка извлечь числовой идентификатор воркера (например, b11 -> 11)
+                                    m = re.search(r"(\d+)$", worker_key) if worker_key else None
+                                    worker_number = int(m.group(1)) if m else None
+                                    now = datetime.datetime.utcnow()
+                                    dev = session.query(Device).filter(Device.user_id == u.id, Device.worker == worker_key).first()
+                                    if dev:
+                                        if not dev.name:
+                                            dev.name = name_val
+                                        dev.last_connected_at = now
+                                        dev.last_seen_at = now
+                                        dev.is_online = 1
+                                    else:
+                                        dev = Device(
+                                            user_id=u.id,
+                                            worker=worker_key,
+                                            worker_number=worker_number,
+                                            name=name_val,
+                                            last_connected_at=now,
+                                            last_seen_at=now,
+                                            is_online=1,
+                                        )
+                                        session.add(dev)
+                                    session.commit()
+                                session.close()
+                            except Exception as e:
+                                logger.warning(f"Не удалось обновить Device для порта {port}: {e}")
                         else:
                             # Если нет params или alias пуст, отправляем как есть
                             data = (json.dumps(msg) + "\n").encode()
@@ -317,6 +354,22 @@ class StratumProxyServer:
                         counts[base] = c - 1
                     elif c == 1:
                         counts.pop(base, None)
+                        # Отмечаем устройство оффлайн, если это было последнее соединение данного воркера
+                        try:
+                            session = get_session(self._engine)
+                            u = session.query(User).filter(User.port == port).first()
+                            if u:
+                                worker_part = base.split('.', 1)[1] if '.' in base else ''
+                                if worker_part:
+                                    worker_part = re.sub(r'-\d+$', '', worker_part)
+                                dev = session.query(Device).filter(Device.user_id == u.id, Device.worker == worker_part).first()
+                                if dev:
+                                    dev.is_online = 0
+                                    dev.last_seen_at = datetime.datetime.utcnow()
+                                    session.commit()
+                            session.close()
+                        except Exception as e:
+                            logger.warning(f"Не удалось отметить оффлайн Device для порта {port}: {e}")
             # Итоговая статистика ошибок пула по данному соединению
             if error_counts:
                 try:
