@@ -20,7 +20,7 @@ def get_main_keyboard(is_admin=False):
     builder = ReplyKeyboardBuilder()
     
     # Основные разделы
-    builder.row(KeyboardButton(text="Статус"))
+    builder.row(KeyboardButton(text="Статус"), KeyboardButton(text="Мои аппараты"))
     builder.row(KeyboardButton(text="Управление пулами"), KeyboardButton(text="Настройки"))
     builder.row(KeyboardButton(text="Оплата подписки"), KeyboardButton(text="Помощь"))
     

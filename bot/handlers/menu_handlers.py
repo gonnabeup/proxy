@@ -1,7 +1,7 @@
 from aiogram import Dispatcher, types, F
 from aiogram.fsm.context import FSMContext
 
-from db.models import User, Mode, get_session, init_db, UserRole
+from db.models import User, Mode, get_session, init_db, UserRole, Device
 from bot.keyboards import (
     get_pools_management_keyboard,
     get_settings_keyboard,
@@ -13,7 +13,7 @@ from .user_commands import cmd_addmode, cmd_modes
 
 import logging
 logger = logging.getLogger(__name__)
-
+from datetime import datetime
 
 def _is_admin_user(user) -> bool:
     try:
@@ -151,6 +151,7 @@ def register_menu_handlers(dp: Dispatcher):
     # Разделы
     dp.message.register(cmd_pool_management, F.text == "Управление пулами")
     dp.message.register(cmd_settings, F.text == "Настройки")
+    dp.message.register(cmd_my_devices, F.text == "Мои аппараты")
     dp.message.register(cmd_back, F.text == "Назад")
 
     # Синонимы для существующих команд под новые кнопки
@@ -171,3 +172,62 @@ def register_menu_handlers(dp: Dispatcher):
     dp.callback_query.register(process_delete_mode_callback, F.data.startswith("del_mode_"))
     dp.callback_query.register(process_delete_modes_pagination, F.data.startswith("del_next_"))
     dp.callback_query.register(process_delete_modes_pagination, F.data.startswith("del_prev_"))
+
+
+def _format_uptime(delta) -> str:
+    try:
+        total = int(delta.total_seconds())
+    except Exception:
+        return "—"
+    minutes, seconds = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    parts = []
+    if days:
+        parts.append(f"{days}д")
+    if hours:
+        parts.append(f"{hours}ч")
+    if minutes:
+        parts.append(f"{minutes}м")
+    if not parts:
+        parts.append(f"{seconds}с")
+    return " ".join(parts)
+
+
+async def cmd_my_devices(message: types.Message):
+    """Показ списка аппаратов пользователя с статусом и аптаймом"""
+    engine = init_db()
+    db_session = get_session(engine)
+    try:
+        user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
+        if not user:
+            await message.answer("Вы не зарегистрированы в системе.")
+            return
+
+        devices = db_session.query(Device).filter(Device.user_id == user.id).all()
+        if not devices:
+            await message.answer("Пока нет подключённых аппаратов.", reply_markup=get_back_keyboard())
+            return
+
+        lines = []
+        now = datetime.utcnow()
+        for idx, dev in enumerate(devices, start=1):
+            name = dev.name or dev.worker or f"Аппарат {idx}"
+            status = "онлайн" if (dev.is_online or 0) else "оффлайн"
+            # Аптайм: онлайн — с момента подключения до сейчас; оффлайн — с подключения до последнего появления
+            if dev.last_connected_at:
+                end_time = now if status == "онлайн" else dev.last_seen_at
+                if end_time and end_time >= dev.last_connected_at:
+                    uptime = _format_uptime(end_time - dev.last_connected_at)
+                else:
+                    uptime = "—"
+            else:
+                uptime = "—"
+
+            worker_info = f" ({dev.worker})" if getattr(dev, "worker", None) else ""
+            lines.append(f"{idx}. {name}{worker_info} — {status}, аптайм {uptime}")
+
+        text = "Ваши аппараты:\n" + "\n".join(lines)
+        await message.answer(text, reply_markup=get_back_keyboard())
+    finally:
+        db_session.close()
