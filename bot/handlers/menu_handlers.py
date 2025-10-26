@@ -7,7 +7,7 @@ from bot.keyboards import (
     get_settings_keyboard,
     get_delete_modes_keyboard,
     get_main_keyboard,
-    get_cancel_keyboard,
+    get_back_keyboard,
 )
 from .user_commands import cmd_addmode, cmd_modes
 
@@ -38,19 +38,25 @@ async def cmd_settings(message: types.Message):
     await message.answer("Выберите настройку:", reply_markup=get_settings_keyboard())
 
 
-async def cmd_back_to_main(message: types.Message):
+async def cmd_back(message: types.Message, state: FSMContext):
     engine = init_db()
     db_session = get_session(engine)
     try:
         user = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
         is_admin = _is_admin_user(user)
-        await message.answer("Главное меню:", reply_markup=get_main_keyboard(is_admin=is_admin))
+        data = await state.get_data()
+        dest = data.get("back_to")
+        if dest == "pools_management":
+            await state.update_data(back_to=None)
+            await message.answer("Меню управления пулами:", reply_markup=get_pools_management_keyboard())
+        else:
+            await message.answer("Главное меню:", reply_markup=get_main_keyboard(is_admin=is_admin))
     finally:
         db_session.close()
 
 
 # ===== Удаление пулов с пагинацией =====
-async def cmd_delete_mode_start(message: types.Message):
+async def cmd_delete_mode_start(message: types.Message, state: FSMContext):
     engine = init_db()
     db_session = get_session(engine)
     try:
@@ -58,21 +64,23 @@ async def cmd_delete_mode_start(message: types.Message):
         if not user:
             await message.answer("Вы не зарегистрированы в системе.")
             return
+        # Устанавливаем контекст возврата в меню управления пулами
+        await state.update_data(back_to="pools_management")
         modes = db_session.query(Mode).filter(Mode.user_id == user.id).all()
         if not modes:
             await message.answer("У вас пока нет добавленных пулов.")
-            await message.answer("Для выхода нажмите Отмена.", reply_markup=get_cancel_keyboard())
+            await message.answer("Для выхода нажмите Назад.", reply_markup=get_back_keyboard())
             return
         # Первую страницу
         kb = get_delete_modes_keyboard(modes, page=1, page_size=5)
         await message.answer("Выберите пул для удаления:", reply_markup=kb)
-        # Отдельно включаем клавиатуру отмены
-        await message.answer("Для выхода нажмите Отмена.", reply_markup=get_cancel_keyboard())
+        # Отдельно включаем клавиатуру возврата
+        await message.answer("Для выхода нажмите Назад.", reply_markup=get_back_keyboard())
     finally:
         db_session.close()
 
 
-async def process_delete_mode_callback(callback: types.CallbackQuery):
+async def process_delete_mode_callback(callback: types.CallbackQuery, state: FSMContext):
     engine = init_db()
     db_session = get_session(engine)
     try:
@@ -99,11 +107,14 @@ async def process_delete_mode_callback(callback: types.CallbackQuery):
             except Exception:
                 await callback.message.answer("Обновлённый список пулов:", reply_markup=kb)
         else:
+            # Нет пулов — переходим в меню управления пулами и очищаем back_to
             try:
                 await callback.message.edit_text("У вас больше нет пулов.")
                 await callback.message.edit_reply_markup(reply_markup=None)
             except Exception:
                 await callback.message.answer("У вас больше нет пулов.")
+            await state.update_data(back_to=None)
+            await callback.message.answer("Меню управления пулами:", reply_markup=get_pools_management_keyboard())
     except Exception:
         try:
             await callback.answer("Ошибка удаления пула.")
@@ -140,7 +151,7 @@ def register_menu_handlers(dp: Dispatcher):
     # Разделы
     dp.message.register(cmd_pool_management, F.text == "Управление пулами")
     dp.message.register(cmd_settings, F.text == "Настройки")
-    dp.message.register(cmd_back_to_main, F.text == "Назад")
+    dp.message.register(cmd_back, F.text == "Назад")
 
     # Синонимы для существующих команд под новые кнопки
     dp.message.register(cmd_addmode, F.text == "Добавить пул")

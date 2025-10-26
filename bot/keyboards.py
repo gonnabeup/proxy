@@ -163,3 +163,9 @@ def get_cancel_inline_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="Отмена", callback_data="pay_cancel"))
     return builder.as_markup()
+
+# Новая клавиатура с кнопкой «Назад»
+def get_back_keyboard():
+    builder = ReplyKeyboardBuilder()
+    builder.add(KeyboardButton(text="Назад"))
+    return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)

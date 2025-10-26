@@ -27,6 +27,7 @@ class User(Base):
     modes = relationship("Mode", back_populates="user", cascade="all, delete-orphan")
     schedules = relationship("Schedule", back_populates="user", cascade="all, delete-orphan")
     payment_requests = relationship("PaymentRequest", back_populates="user", cascade="all, delete-orphan")
+    devices = relationship("Device", back_populates="user", cascade="all, delete-orphan")
     
     def is_subscription_active(self):
         return datetime.datetime.now() <= self.subscription_until
@@ -88,6 +89,31 @@ class PaymentRequest(Base):
 
     user = relationship("User", back_populates="payment_requests")
 
+# ===== Новая модель устройств пользователя =====
+class Device(Base):
+    __tablename__ = 'devices'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    # Воркер-метка из логина майнера (часть после точки)
+    worker = Column(String, nullable=False)
+    # Если воркер — числовой идентификатор, сохраняем как число (иначе NULL)
+    worker_number = Column(Integer, nullable=True)
+    # Имя аппарата (по умолчанию совпадает с worker)
+    name = Column(String, nullable=True)
+    # Время последнего успешного авторизованного подключения
+    last_connected_at = Column(DateTime, nullable=True)
+    # Время последней активности/отключения
+    last_seen_at = Column(DateTime, nullable=True)
+    # Состояние онлайн (0/1)
+    is_online = Column(Integer, default=0)
+
+    user = relationship("User", back_populates="devices")
+
+    def __repr__(self):
+        return f"<Device(id={self.id}, user_id={self.user_id}, worker={self.worker}, online={self.is_online})>"
+
+
 def init_db(db_url=None):
     """Инициализация базы данных"""
     # Если URL базы не передан, используем значение из настроек
@@ -120,6 +146,7 @@ def init_db(db_url=None):
     )
     Base.metadata.create_all(engine)
     return engine
+
 
 def get_session(engine):
     """Создание сессии для работы с базой данных"""
