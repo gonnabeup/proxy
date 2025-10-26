@@ -1,5 +1,6 @@
 from .user_commands import register_user_handlers
 from .admin_commands import register_admin_handlers
+from .menu_handlers import register_menu_handlers
 from aiogram import F, Bot
 from aiogram.types import ChatMemberUpdated
 import logging
@@ -29,5 +30,6 @@ def register_handlers(dp, proxy_server=None):
     dp.my_chat_member.register(_guard_leave_non_private)
     
     register_user_handlers(dp)
+    register_menu_handlers(dp)
     # Передаём proxy_server в админские обработчики, если доступен
     register_admin_handlers(dp, proxy_server=proxy_server)
