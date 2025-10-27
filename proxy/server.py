@@ -34,10 +34,13 @@ class StratumProxyServer:
         self._worker_counts: Dict[int, Dict[str, int]] = {}
         self._port_mode: Dict[int, dict] = {}
         self._lock = asyncio.Lock()
+        self._watch_task: Optional[asyncio.Task] = None
+        self._running: bool = False
 
     async def start(self):
         """Запускает серверы для всех пользователей из БД."""
         logger.info("Инициализация StratumProxyServer...")
+        self._running = True
         session = get_session(self._engine)
         try:
             users = session.query(User).all()
@@ -50,9 +53,24 @@ class StratumProxyServer:
         finally:
             session.close()
 
+        # Запускаем фоновый монитор изменений активных режимов
+        if self._watch_task is None or self._watch_task.done():
+            try:
+                self._watch_task = asyncio.create_task(self._watch_active_modes())
+            except Exception as e:
+                logger.warning(f"Не удалось запустить монитор активных режимов: {e}")
+
     async def stop(self):
         """Останавливает все серверы и активные клиентские соединения."""
         logger.info("Остановка всех портов прокси...")
+        self._running = False
+        if self._watch_task:
+            try:
+                self._watch_task.cancel()
+                await asyncio.gather(self._watch_task, return_exceptions=True)
+            except Exception:
+                pass
+            self._watch_task = None
         # Копии ключей, чтобы безопасно итерироваться
         for port in list(self._servers.keys()):
             await self._stop_port(port)
@@ -134,11 +152,102 @@ class StratumProxyServer:
         self._port_mode.pop(port, None)
         logger.info(f"Порт {port} остановлен")
 
+    async def _watch_active_modes(self):
+        """Периодически проверяет активные режимы в БД и перезагружает изменившиеся порты."""
+        while True:
+            try:
+                # Останавливаемся, если сервер не в состоянии running
+                if not getattr(self, "_running", False):
+                    await asyncio.sleep(1)
+                    continue
+                session = get_session(self._engine)
+                try:
+                    users = session.query(User).all()
+                    now_map = {}
+                    for u in users:
+                        m = session.query(Mode).filter(Mode.user_id == u.id, Mode.is_active == 1).first()
+                        if m:
+                            now_map[u.port] = {
+                                "host": m.host,
+                                "port": m.port,
+                                "alias": m.alias,
+                                "mode_name": m.name,
+                                "login": u.login,
+                            }
+                        else:
+                            now_map[u.port] = {
+                                "host": "sleep",
+                                "port": 0,
+                                "alias": "",
+                                "mode_name": "sleep",
+                                "login": u.login,
+                            }
+                finally:
+                    try:
+                        session.close()
+                    except Exception:
+                        pass
+
+                # Сравниваем и перезагружаем только изменившиеся порты
+                for port, new_conf in now_map.items():
+                    old_conf = self._port_mode.get(port)
+                    if old_conf != new_conf:
+                        logger.info(f"Обнаружено изменение режима на порту {port}: {old_conf} -> {new_conf}. Перезагружаю порт.")
+                        try:
+                            await self.reload_port(port)
+                        except Exception as e:
+                            logger.warning(f"Ошибка перезагрузки порта {port}: {e}")
+
+                # Если появился новый пользователь (новый порт), запускаем его
+                for port in now_map.keys():
+                    if port not in self._servers:
+                        try:
+                            await self._start_port(port)
+                        except Exception as e:
+                            logger.warning(f"Не удалось запустить новый порт {port}: {e}")
+
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Ошибка в мониторинге активных режимов: {e}")
+                await asyncio.sleep(5)
+
     async def _handle_client(self, miner_reader: asyncio.StreamReader, miner_writer: asyncio.StreamWriter, port: int):
         addr = miner_writer.get_extra_info('peername')
         client_task = asyncio.current_task()
         self._clients.setdefault(port, set()).add(client_task)
         logger.info(f"Подключен майнер {addr} -> порт {port}")
+
+        # Актуализируем активный режим из БД, чтобы не требовалась перезагрузка
+        try:
+            session = get_session(self._engine)
+            u = session.query(User).filter(User.port == port).first()
+            if u:
+                m = session.query(Mode).filter(Mode.user_id == u.id, Mode.is_active == 1).first()
+                if m:
+                    self._port_mode[port] = {
+                        "host": m.host,
+                        "port": m.port,
+                        "alias": m.alias,
+                        "mode_name": m.name,
+                        "login": u.login,
+                    }
+                else:
+                    self._port_mode[port] = {
+                        "host": "sleep",
+                        "port": 0,
+                        "alias": "",
+                        "mode_name": "sleep",
+                        "login": u.login,
+                    }
+        except Exception as e:
+            logger.warning(f"Не удалось актуализировать режим для порта {port}: {e}")
+        finally:
+            try:
+                session.close()
+            except Exception:
+                pass
 
         # Получаем активный режим из кеша порта (без запросов к БД)
         cached = self._port_mode.get(port)
