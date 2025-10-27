@@ -1057,6 +1057,7 @@ def register_user_handlers(dp: Dispatcher):
     
     dp.message.register(cmd_setmode_wrapper, Command("setmode"))
     dp.message.register(cmd_setmode_wrapper, F.text == "Выбор текущего пула")
+    dp.message.register(cmd_setmode_wrapper, F.text == "Установить текущий пул")
     
     async def process_mode_selection_wrapper(msg: types.Message, state: FSMContext):
         engine = init_db()

@@ -1,19 +1,7 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton
 
-def get_cancel_keyboard():
-    """Клавиатура с кнопкой отмены"""
-    builder = ReplyKeyboardBuilder()
-    builder.add(KeyboardButton(text="Отмена"))
-    # Один раз показать, затем скрыть после нажатия
-    return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
-
-def get_yes_no_keyboard():
-    """Клавиатура с кнопками Да/Нет"""
-    builder = ReplyKeyboardBuilder()
-    builder.add(KeyboardButton(text="Да"))
-    builder.add(KeyboardButton(text="Нет"))
-    return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 def get_main_keyboard(is_admin=False):
     """Основная клавиатура с доступными командами (обновлённая структура)"""
@@ -22,6 +10,8 @@ def get_main_keyboard(is_admin=False):
     # Основные разделы
     builder.row(KeyboardButton(text="Статус"), KeyboardButton(text="Мои аппараты"))
     builder.row(KeyboardButton(text="Управление пулами"), KeyboardButton(text="Настройки"))
+    # Кнопка выбора текущего пула
+    builder.row(KeyboardButton(text="Установить текущий пул"))
     builder.row(KeyboardButton(text="Управление расписаниями"))
     builder.row(KeyboardButton(text="Оплата подписки"), KeyboardButton(text="Помощь"))
     
@@ -40,7 +30,7 @@ def get_pools_management_keyboard():
     """Клавиатура раздела "Управление пулами"""
     builder = ReplyKeyboardBuilder()
     builder.row(KeyboardButton(text="Добавить пул"), KeyboardButton(text="Удалить пул"))
-    builder.row(KeyboardButton(text="Список пулов"))
+    builder.row(KeyboardButton(text="Установить текущий пул"), KeyboardButton(text="Список пулов"))
     builder.row(KeyboardButton(text="Назад"))
     return builder.as_markup(resize_keyboard=True, one_time_keyboard=False)
 
