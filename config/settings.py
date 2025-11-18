@@ -39,3 +39,13 @@ DB_MAX_OVERFLOW = int(os.getenv('DB_MAX_OVERFLOW', '400'))
 DB_POOL_TIMEOUT = int(os.getenv('DB_POOL_TIMEOUT', '60'))
 DB_POOL_RECYCLE = int(os.getenv('DB_POOL_RECYCLE', '1800'))
 DB_POOL_PRE_PING = os.getenv('DB_POOL_PRE_PING', '1').lower() in ('1', 'true', 'yes')
+
+# HTTP API для управления прокси
+PROXY_API_HOST = os.getenv('PROXY_API_HOST', '127.0.0.1')
+PROXY_API_PORT = int(os.getenv('PROXY_API_PORT', '8080'))
+PROXY_API_TOKEN = os.getenv('PROXY_API_TOKEN', '')
+
+# Приложение HTTP API
+APP_API_HOST = os.getenv('APP_API_HOST', '0.0.0.0')
+APP_API_PORT = int(os.getenv('APP_API_PORT', '8000'))
+APP_API_TOKEN = os.getenv('APP_API_TOKEN', '')

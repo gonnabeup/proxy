@@ -1,12 +1,14 @@
 import asyncio
 import os
 import sys
+import argparse
 
 # Ensure project root is on sys.path so 'bot' package is importable
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 import logging
+import io
 import sys
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -14,8 +16,9 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
 
 from config.settings import (
-    BOT_TOKEN, PROXY_HOST, DEFAULT_PORT_RANGE, 
-    SCHEDULER_CHECK_INTERVAL, LOG_LEVEL
+    BOT_TOKEN, PROXY_HOST, DEFAULT_PORT_RANGE,
+    SCHEDULER_CHECK_INTERVAL, LOG_LEVEL,
+    PROXY_API_HOST, PROXY_API_PORT, PROXY_API_TOKEN,
 )
 from db.models import init_db, get_session, User, UserRole
 from proxy.server import StratumProxyServer
@@ -23,12 +26,17 @@ from bot.handlers import register_handlers
 from bot.scheduler import Scheduler
 
 # Настройка логирования
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
 logging.basicConfig(
     level=LOG_LEVEL,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('logs/app.log')
+        logging.StreamHandler(io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='ignore')),
+        logging.FileHandler('logs/app.log', encoding='utf-8')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -118,6 +126,7 @@ async def main():
         await set_commands(bot)
         
         # Запуск прокси-сервера
+        await proxy_server.start_http_api(PROXY_API_HOST, PROXY_API_PORT, PROXY_API_TOKEN)
         await proxy_server.start()
         
         # Запуск планировщика
@@ -135,9 +144,42 @@ async def main():
         
         logger.info("Приложение остановлено")
 
-if __name__ == "__main__":
+async def run_proxy_only():
+    """Запуск только прокси-сервера и планировщика без Telegram-бота"""
+    logger.info("Запуск только прокси-сервера и планировщика (без Telegram-бота)...")
+
+    engine = init_db()
+    proxy_server = StratumProxyServer()
+    scheduler = Scheduler(
+        proxy_server=proxy_server,
+        check_interval=SCHEDULER_CHECK_INTERVAL,
+        bot=None,
+    )
+
     try:
-        asyncio.run(main())
+        try:
+            await proxy_server.start_http_api(PROXY_API_HOST, PROXY_API_PORT, PROXY_API_TOKEN)
+        except Exception:
+            pass
+        await proxy_server.start()
+        await scheduler.start()
+        stop_event = asyncio.Event()
+        await stop_event.wait()
+    finally:
+        await scheduler.stop()
+        await proxy_server.stop()
+        logger.info("Proxy-only сервис остановлен")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Cryptoshi Stratum Proxy")
+    parser.add_argument("--proxy-only", action="store_true", help="Запустить только прокси-сервер без Telegram-бота")
+    args = parser.parse_args()
+
+    try:
+        if args.proxy_only:
+            asyncio.run(run_proxy_only())
+        else:
+            asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Приложение остановлено пользователем")
     except Exception as e:

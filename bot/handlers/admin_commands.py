@@ -1,9 +1,11 @@
 import logging
+import aiohttp
 from aiogram import Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from db.models import User, Mode, Schedule
+from config.settings import PROXY_API_HOST, PROXY_API_PORT, PROXY_API_TOKEN, APP_API_HOST, APP_API_PORT, APP_API_TOKEN
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +15,40 @@ _proxy_server = None
 def _set_proxy_server(server):
     global _proxy_server
     _proxy_server = server
+
+async def _proxy_api_reload_port(port: int):
+    base = f"http://{PROXY_API_HOST}:{PROXY_API_PORT}"
+    url = base + "/reload-port"
+    headers = {"X-Proxy-Token": PROXY_API_TOKEN} if PROXY_API_TOKEN else {}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json={"port": port}, headers=headers) as resp:
+            if resp.status >= 400:
+                text = await resp.text()
+                raise RuntimeError(f"proxy api error {resp.status}: {text}")
+
+async def _api_get(path: str):
+    base = f"http://{APP_API_HOST}:{APP_API_PORT}"
+    url = base + path
+    headers = {"X-Api-Token": APP_API_TOKEN} if APP_API_TOKEN else {}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as resp:
+            text = await resp.text()
+            if resp.status >= 400:
+                raise RuntimeError(text)
+            import json as _json
+            return _json.loads(text)
+
+async def _api_post(path: str, payload: dict):
+    base = f"http://{APP_API_HOST}:{APP_API_PORT}"
+    url = base + path
+    headers = {"X-Api-Token": APP_API_TOKEN} if APP_API_TOKEN else {}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload, headers=headers) as resp:
+            text = await resp.text()
+            if resp.status >= 400:
+                raise RuntimeError(text)
+            import json as _json
+            return _json.loads(text)
 
 async def cmd_admin_help(message: types.Message):
     """Обработчик команды /admin_help"""
@@ -98,78 +134,31 @@ async def cmd_listusers(message: types.Message):
 
 async def cmd_freerange(message: types.Message):
     """Показать свободные порты в DEFAULT_PORT_RANGE"""
-    from db.models import init_db, get_session, User
-    from config.settings import DEFAULT_PORT_RANGE
-    engine = init_db()
-    db_session = get_session(engine)
     try:
-        start, end = DEFAULT_PORT_RANGE
-        used = {u.port for u in db_session.query(User).all()}
-        free = [p for p in range(start, end + 1) if p not in used]
+        data = await _api_get("/freerange")
+        free = data.get("free_ports", [])
         if not free:
             await message.answer("Свободных портов нет в заданном диапазоне.")
             return
-        # ограничим вывод, чтобы не заспамить чат
         preview = free[:100]
         tail = "" if len(free) <= 100 else f" … и ещё {len(free)-100}"
         await message.answer("Свободные порты:\n" + ", ".join(map(str, preview)) + tail)
-    finally:
-        db_session.close()
+    except Exception:
+        await message.answer("Ошибка запроса свободных портов.")
 
 async def cmd_setport(message: types.Message):
     """Назначить порт пользователю: /setport <tg_id> <port>"""
-    from db.models import init_db, get_session, User, UserRole
-    from config.settings import DEFAULT_PORT_RANGE
-    engine = init_db()
-    db_session = get_session(engine)
     try:
-        # проверка прав
-        admin = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
-        if not admin or admin.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
-            await message.answer("У вас нет прав для выполнения этой команды.")
-            return
-
         args = _split_args(message.text)
         if len(args) != 2:
             await message.answer("Использование: /setport tg_id port\nНапример: /setport 1146015328 4100")
             return
-        try:
-            tg_id = int(args[0])
-            new_port = int(args[1])
-        except ValueError:
-            await message.answer("tg_id и port должны быть числами.")
-            return
-        start, end = DEFAULT_PORT_RANGE
-        if not (start <= new_port <= end):
-            await message.answer(f"Порт вне диапазона {start}-{end}.")
-            return
-        # проверка занятости порта
-        if db_session.query(User).filter(User.port == new_port).first():
-            await message.answer("Порт уже занят другим пользователем.")
-            return
-        user = db_session.query(User).filter(User.tg_id == tg_id).first()
-        if not user:
-            await message.answer("Пользователь с таким tg_id не найден.")
-            return
-        old_port = user.port
-        user.port = new_port
-        db_session.commit()
-        await message.answer(f"Порт пользователя {user.username or tg_id} изменён: {old_port} → {new_port}.")
-        # Если доступен прокси-сервер, выполняем точечные перезагрузки старого и нового портов
-        try:
-            if _proxy_server:
-                # Останавливаем и очищаем старый порт (если был запущен)
-                await _proxy_server.reload_port(old_port)
-                # Запускаем новый порт
-                await _proxy_server.reload_port(new_port)
-                await message.answer(f"Прокси перезагружен для портов {old_port} и {new_port}.")
-            else:
-                await message.answer("Предупреждение: объект прокси-сервера недоступен для перезагрузки. Перезапустите сервис.")
-        except Exception as e:
-            logger.error(f"Ошибка перезагрузки портов {old_port}/{new_port}: {e}")
-            await message.answer("Ошибка перезагрузки портов. Проверьте логи сервера.")
-    finally:
-        db_session.close()
+        tg_id = int(args[0])
+        new_port = int(args[1])
+        await _api_post("/admin/set-port", {"tg_id": tg_id, "port": new_port})
+        await message.answer(f"Порт пользователя {tg_id} изменён на {new_port}. Прокси перезагружен.")
+    except Exception:
+        await message.answer("Ошибка изменения порта.")
 
 async def cmd_setsub(message: types.Message):
     """Установить дату подписки: /setsub <tg_id> <DD.MM.YYYY>"""
@@ -206,73 +195,26 @@ async def cmd_setsub(message: types.Message):
 
 async def cmd_adduser(message: types.Message):
     """Добавить пользователя: /adduser <tg_id> <username> <port> <login>"""
-    import datetime
-    from db.models import init_db, get_session, User, UserRole
-    from db.models import Mode
-    from config.settings import DEFAULT_PORT_RANGE
-    engine = init_db()
-    db_session = get_session(engine)
     try:
-        admin = db_session.query(User).filter(User.tg_id == message.from_user.id).first()
-        if not admin or admin.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
-            await message.answer("У вас нет прав для выполнения этой команды.")
-            return
         args = _split_args(message.text)
         if len(args) < 4:
             await message.answer("Использование: /adduser tg_id username port login\nНапример: /adduser 1146015328 Ivan 4100 ivan_worker")
             return
-        try:
-            tg_id = int(args[0])
-            username = args[1]
-            port = int(args[2])
-            login = args[3]
-        except Exception:
-            await message.answer("Неверные аргументы. Проверьте формат.")
-            return
-        start, end = DEFAULT_PORT_RANGE
-        if not (start <= port <= end):
-            await message.answer(f"Порт вне диапазона {start}-{end}.")
-            return
-        if db_session.query(User).filter((User.tg_id == tg_id) | (User.port == port)).first():
-            await message.answer("Пользователь с таким tg_id или порт уже существует.")
-            return
-        user = User(
-            tg_id=tg_id,
-            username=username,
-            role=UserRole.USER,
-            port=port,
-            login=login,
-            timezone='UTC',
-            subscription_until=datetime.datetime.now() + datetime.timedelta(days=30)
-        )
-        db_session.add(user)
-        # Получим user.id без полного коммита
-        db_session.flush()
-
-        # Добавляем режим Sleep по умолчанию и делаем его активным
-        sleep_mode = Mode(
-            user_id=user.id,
-            name='Sleep',
-            host='sleep',
-            port=0,
-            alias='sleep',
-            is_active=1
-        )
-        db_session.add(sleep_mode)
-        db_session.commit()
-        await message.answer(f"Пользователь добавлен: {username} (tg_id={tg_id}), порт {port}, логин {login}. По умолчанию активен режим Sleep.")
-        # Сразу перезагрузим порт для нового пользователя, если доступен объект сервера
+        tg_id = int(args[0])
+        username = args[1]
+        port = int(args[2])
+        login = args[3]
+        await _api_post("/admin/add-user", {"tg_id": tg_id, "username": username, "port": port, "login": login})
+        await message.answer(f"Пользователь добавлен: {username} (tg_id={tg_id}), порт {port}, логин {login}.")
         try:
             if _proxy_server:
                 await _proxy_server.reload_port(port)
-                await message.answer(f"Порт {port} перезагружен для нового пользователя.")
             else:
-                await message.answer("Предупреждение: объект прокси-сервера недоступен для перезагрузки. Перезапустите сервис.")
-        except Exception as e:
-            logger.error(f"Ошибка перезагрузки порта {port} после добавления пользователя: {e}")
-            await message.answer("Ошибка перезагрузки порта. Проверьте логи сервера.")
-    finally:
-        db_session.close()
+                await _proxy_api_reload_port(port)
+        except Exception:
+            pass
+    except Exception:
+        await message.answer("Ошибка добавления пользователя.")
 
 async def cmd_payments(message: types.Message):
     """Показать заявки на оплату со статусом PENDING"""
@@ -489,11 +431,11 @@ async def cmd_reloadport(message: types.Message):
             await message.answer("Порт должен быть числом.")
             return
 
-        if not _proxy_server:
-            await message.answer("Объект прокси-сервера недоступен. Перезапустите сервис.")
-            return
         try:
-            await _proxy_server.reload_port(port)
+            if _proxy_server:
+                await _proxy_server.reload_port(port)
+            else:
+                await _proxy_api_reload_port(port)
             await message.answer(f"Порт {port} перезагружен.")
         except Exception as e:
             logger.error(f"Ошибка перезагрузки порта {port}: {e}")

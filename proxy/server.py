@@ -4,10 +4,11 @@ import logging
 import datetime
 import re
 from typing import Dict, Set, Optional
+from aiohttp import web
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
-from config.settings import PROXY_HOST, BOT_TOKEN
+from config.settings import PROXY_HOST, BOT_TOKEN, PROXY_API_HOST, PROXY_API_PORT, PROXY_API_TOKEN
 from db.models import init_db, get_session, User, Mode, Device
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,8 @@ class StratumProxyServer:
         self._lock = asyncio.Lock()
         self._watch_task: Optional[asyncio.Task] = None
         self._running: bool = False
+        self._http_runner: Optional[web.AppRunner] = None
+        self._http_site: Optional[web.TCPSite] = None
 
     async def start(self):
         """Запускает серверы для всех пользователей из БД."""
@@ -74,6 +77,10 @@ class StratumProxyServer:
         # Копии ключей, чтобы безопасно итерироваться
         for port in list(self._servers.keys()):
             await self._stop_port(port)
+        try:
+            await self.stop_http_api()
+        except Exception:
+            pass
         logger.info("Прокси-сервер остановлен")
 
     async def reload_port(self, port: int):
@@ -83,6 +90,16 @@ class StratumProxyServer:
             await self._stop_port(port)
             await self._start_port(port)
             logger.info(f"Порт {port} перезагружен")
+
+    async def start_port(self, port: int):
+        async with self._lock:
+            await self._start_port(port)
+            logger.info(f"Порт {port} запущен")
+
+    async def stop_port(self, port: int):
+        async with self._lock:
+            await self._stop_port(port)
+            logger.info(f"Порт {port} остановлен")
 
     async def _start_port(self, port: int):
         """Запуск прослушивания указанного порта, если для него существует пользователь."""
@@ -151,6 +168,84 @@ class StratumProxyServer:
         self._worker_counts.pop(port, None)
         self._port_mode.pop(port, None)
         logger.info(f"Порт {port} остановлен")
+
+    async def start_http_api(self, host: str = PROXY_API_HOST, port: int = PROXY_API_PORT, token: Optional[str] = PROXY_API_TOKEN):
+        app = web.Application()
+
+        async def _auth(request):
+            t = token or ""
+            if t:
+                if request.headers.get("X-Proxy-Token", "") != t:
+                    return web.json_response({"error": "unauthorized"}, status=401)
+            return None
+
+        async def health(request):
+            err = await _auth(request)
+            if err:
+                return err
+            return web.json_response({"status": "ok"})
+
+        async def status(request):
+            err = await _auth(request)
+            if err:
+                return err
+            ports = sorted(list(self._servers.keys()))
+            return web.json_response({"ports": ports})
+
+        async def reload_port_handler(request):
+            err = await _auth(request)
+            if err:
+                return err
+            data = await request.json()
+            p = int(data.get("port"))
+            await self.reload_port(p)
+            return web.json_response({"result": "reloaded", "port": p})
+
+        async def start_port_handler(request):
+            err = await _auth(request)
+            if err:
+                return err
+            data = await request.json()
+            p = int(data.get("port"))
+            await self.start_port(p)
+            return web.json_response({"result": "started", "port": p})
+
+        async def stop_port_handler(request):
+            err = await _auth(request)
+            if err:
+                return err
+            data = await request.json()
+            p = int(data.get("port"))
+            await self.stop_port(p)
+            return web.json_response({"result": "stopped", "port": p})
+
+        app.add_routes([
+            web.get("/health", health),
+            web.get("/status", status),
+            web.post("/reload-port", reload_port_handler),
+            web.post("/start-port", start_port_handler),
+            web.post("/stop-port", stop_port_handler),
+        ])
+
+        self._http_runner = web.AppRunner(app)
+        await self._http_runner.setup()
+        self._http_site = web.TCPSite(self._http_runner, host, port)
+        await self._http_site.start()
+        logger.info(f"HTTP API запущен на {host}:{port}")
+
+    async def stop_http_api(self):
+        if self._http_site:
+            try:
+                await self._http_site.stop()
+            except Exception:
+                pass
+            self._http_site = None
+        if self._http_runner:
+            try:
+                await self._http_runner.cleanup()
+            except Exception:
+                pass
+            self._http_runner = None
 
     async def _watch_active_modes(self):
         """Периодически проверяет активные режимы в БД и перезагружает изменившиеся порты."""

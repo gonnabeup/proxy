@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, BigInteger, String, ForeignKey, DateTime, create_engine, Enum
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 import datetime
@@ -136,16 +137,31 @@ def init_db(db_url=None):
             DB_POOL_TIMEOUT = 60
             DB_POOL_RECYCLE = 1800
             DB_POOL_PRE_PING = True
-    engine = create_engine(
-        db_url,
-        pool_size=DB_POOL_SIZE,
-        max_overflow=DB_MAX_OVERFLOW,
-        pool_timeout=DB_POOL_TIMEOUT,
-        pool_pre_ping=DB_POOL_PRE_PING,
-        pool_recycle=DB_POOL_RECYCLE,
-    )
-    Base.metadata.create_all(engine)
-    return engine
+    def _create(db_url_local, use_pool=True):
+        if db_url_local.startswith("sqlite"):
+            use_pool = False
+        if use_pool:
+            eng = create_engine(
+                db_url_local,
+                pool_size=DB_POOL_SIZE,
+                max_overflow=DB_MAX_OVERFLOW,
+                pool_timeout=DB_POOL_TIMEOUT,
+                pool_pre_ping=DB_POOL_PRE_PING,
+                pool_recycle=DB_POOL_RECYCLE,
+            )
+        else:
+            eng = create_engine(db_url_local)
+        return eng
+
+    try:
+        engine = _create(db_url)
+        Base.metadata.create_all(engine)
+        return engine
+    except OperationalError:
+        fallback_url = "sqlite:///stratum_proxy.db"
+        engine = _create(fallback_url, use_pool=False)
+        Base.metadata.create_all(engine)
+        return engine
 
 
 def get_session(engine):
